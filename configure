@@ -1,3 +1,7 @@
 
+if [ -z "`llvm-config --obj-root 2> /dev/null`" ]; then
+    echo "No 'llvm-config' found. Install LLVM."
+    exit 1
+fi
 
-cmake . -DLLVM_DIR=/opt/local/libexec/llvm-3.7/share/llvm/cmake/
+cmake . -DLLVM_DIR="`llvm-config --obj-root`/share/llvm/cmake/"
