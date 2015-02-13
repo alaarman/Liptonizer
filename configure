@@ -1,0 +1,3 @@
+
+
+cmake . -DLLVM_DIR=/opt/local/libexec/llvm-3.7/share/llvm/cmake/
