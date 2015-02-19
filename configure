@@ -4,4 +4,6 @@ if [ -z "`llvm-config --obj-root 2> /dev/null`" ]; then
     exit 1
 fi
 
-cmake . -DLLVM_DIR="`llvm-config --obj-root`/share/llvm/cmake/"
+#cmake . -DLLVM_DIR="/opt/install/share/llvm/cmake/"
+#cmake . -DLLVM_DIR="`llvm-config --obj-root`"
+cmake . -DCMAKE_PREFIX_PATH="`llvm-config --prefix`" $1
