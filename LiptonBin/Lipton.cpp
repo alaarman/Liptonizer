@@ -51,70 +51,75 @@ get_name(Function const *f)
     return f ? f->getName() : "external node";
 }
 
-
-
-
-namespace {
+namespace VVT {
 
 class BitMatrix {
-    vector<char *> content;
-    int X,Y;
+    vector<char *> rows;
+    int C,R;
 
 public:
-    BitMatrix(int init_x, int init_y) {
-        X = init_x;
-        Y = init_y;
-        int x = (init_x + 7) >> 3;
-        for (int i = 0; i < Y; i++) {
+    BitMatrix(int init_cols, int init_rows) {
+        C = init_cols;
+        R = init_rows;
+        int x = (init_cols + 7) >> 3;
+        for (int row = 0; row < R; row++) {
             char* c = (char*)(calloc (x, 1));
-            content.push_back (c); // initialized to 0
+            rows.push_back (c); // initialized to 0
         }
     }
 
-    inline bool set (int x, int y) {
-        assert (x < X && y < Y);
+    inline void copy (int row_to, int row) {
+        assert (row_to < R && row < R);
+        assert (row_to != row);
+        int col_size = (R + 7) >> 3;
+        for (int col_high = 0; col_high < col_size; col_high++) {
+            rows[row_to][col_high] |= rows[row][col_high];
+        }
+    }
 
-        int xl = x & 7;
-        int xh = x >> 3;
-        char *c = content[y];
-        int res = c[xh] & (1 << xl);
-        content[y][xh] |= (1 << xl);
+    inline bool set (int col, int row) {
+        assert (col < C && row < R);
+
+        int col_low = col & 7;
+        int col_high = col >> 3;
+        int res = rows[row][col_high] & (1 << col_low);
+        rows[row][col_high] |= (1 << col_low);
         return res != 0;
     }
 
-    inline bool get (int x, int y) {
-        assert (x < X && y < Y);
+    inline bool get (int col, int row) {
+        assert (col < C && row < R);
 
-        int xl = x & 7;
-        int xh = x >> 3;
-        int res = content[y][xh] & (1<<xl);
+        int col_low = col & 7;
+        int col_high = col >> 3;
+        int res = rows[row][col_high] & (1<<col_low);
         return res != 0;
     }
 
-    void grow (int x, int y) {
-        assert (x > X && y > Y);
-        int xb = (x + 7) >> 3;
+    void grow (int new_cols, int new_rows) {
+        assert (new_cols > C && new_rows > R);
+        int col_size = (new_cols + 7) >> 3;
 
-        for (int i = 0; i < Y; i++) {
-            char *m = content[i];
-            content[i] = (char *)calloc(xb, 1); // initialized to 0
-            int Xb = (X + 7) >> 3;
-            memcpy(content[i], m, Xb);
+        for (int i = 0; i < R; i++) {
+            char *m = rows[i];
+            rows[i] = (char *)calloc(col_size, 1); // initialized to 0
+            int Xb = (C + 7) >> 3;
+            memcpy(rows[i], m, Xb);
             delete m;
         }
-        for (int i = Y; i < y; i++) {
-            char* c = (char*)(calloc (xb, 1));
-            content.push_back (c); // initialized to 0
+        for (int i = R; i < new_rows; i++) {
+            char* c = (char*)(calloc (col_size, 1));
+            rows.push_back (c); // initialized to 0
         }
 
-        X = x;
-        Y = y;
+        C = new_cols;
+        R = new_rows;
     }
 
     void print () {
-        for (int i = 0; i < Y; i++) {
-            for (int j = 0; j < X; j++) {
-                outs() << (get(j, i) ? "1," : "0,");
+        for (int row = 0; row < R; row++) {
+            for (int col = 0; col < C; col++) {
+                outs() << (get(col, row) ? "1," : "0,");
             }
             outs() << "\n";
         }
@@ -122,11 +127,21 @@ public:
     }
 };
 
+struct SCCI {
+    SCCI(int i, bool l) :
+        index(i),
+        loops(l) {};
+
+    int     index;
+    bool    loops;
+};
+
+
 struct Reach : public CallGraphSCCPass {
 
 public:
-    typedef DenseMap<Instruction *, int> IndexMapT;
-    typedef pair<Instruction *, int> IndexKVT;
+    DenseMap<Instruction *, SCCI *> instructionMap;
+    DenseMap<BasicBlock *, SCCI *> blockMap;
 
     Reach() : CallGraphSCCPass(ID), reach(0,0) { }
 
@@ -137,9 +152,9 @@ public:
     }
 
 private:
-    IndexMapT indices;
     int indicesIndex = 0;
     BitMatrix reach;
+    int sccNum = 0;
 
     //DenseSet<const Function *> functions;
 
@@ -151,22 +166,43 @@ private:
         AU.addRequired<CallGraphWrapperPass>();
     }
 
-    void addInstruction (Instruction& I);
-    Function* printNode (CallGraphNode* const node, CallGraphSCC& SCC);
+    void printNode (CallGraphNode* const node, CallGraphSCC& SCC);
+
+    SCCI *addSCC (bool loops);
+    void addInstruction (SCCI *scc, Instruction& I);
+    void addBlock (SCCI *scc, BasicBlock *I);
 };
-}
 
 
 char Reach::ID = 0;
 static RegisterPass<Reach> X("reach", "Walk CFG");
 
 void
-Reach::addInstruction (Instruction& I)
+Reach::addBlock (SCCI *scc, BasicBlock *bb)
 {
-    if (!indices.insert (IndexKVT (&I, indicesIndex++)).second) {
+    if (!blockMap.insert( make_pair(bb, scc) ).second) {
+        outs () << "Instruction added twice: " << *bb;
+        exit (1);
+    }
+}
+
+void
+Reach::addInstruction (SCCI *scc, Instruction& I)
+{
+    if (!instructionMap.insert( make_pair(&I, scc) ).second) {
         outs () << "Instruction added twice: " << I;
         exit (1);
     }
+}
+
+SCCI *
+Reach::addSCC (bool loops)
+{
+    SCCI *scci = new SCCI (indicesIndex++, loops);
+    reach.grow(indicesIndex, indicesIndex);
+    if (loops)
+        reach.set (scci->index, scci->index); // reflexive reachability properties
+    return scci;
 }
 
 void
@@ -174,7 +210,7 @@ Reach::printNode (CallGraphNode* const node, CallGraphSCC& SCC)
 {
     Function* F = node->getFunction ();
     if (SCC.size () > 1) {
-        outs () << "Mutual recursion nor supported: " << get_name (F);
+        outs () << "Mutual recursion not supported: " << get_name (F);
         exit (1);
     }
     outs () << get_name (F) << " calls: ";
@@ -182,8 +218,27 @@ Reach::printNode (CallGraphNode* const node, CallGraphSCC& SCC)
         Function* callee = rec.second->getFunction ();
         outs () << get_name (callee) << ", ";
         if (get_name (callee) == get_name (F)) {
-            outs () << "Mutual recursion nor supported: " << get_name (F);
+            outs () << "Mutual recursion not supported: " << get_name (F);
             exit (1);
+        }
+    }
+    errs () << "\n";
+
+    if (!F || F->getBasicBlockList().empty()) return;
+    errs() << "SCCs for Function " <<  get_name (F) << " in PostOrder:";
+    for (scc_iterator<Function *> SCCI = scc_begin(F); !SCCI.isAtEnd(); ++SCCI) {
+        const std::vector<BasicBlock *> &nextSCC = *SCCI;
+        errs() << "\nSCC #" << ++sccNum << " : ";
+
+        for (BasicBlock *bb : nextSCC) {
+            errs() << bb->getName() << ", ";
+            for (Instruction &I : *bb) {
+                errs() << I.getName() << ", ";
+            }
+        }
+
+        if (nextSCC.size() == 1 && SCCI.hasLoop()) {
+            errs() << " (Has self-loop).";
         }
     }
     errs () << "\n";
@@ -192,53 +247,84 @@ Reach::printNode (CallGraphNode* const node, CallGraphSCC& SCC)
 bool
 Reach::runOnSCC(CallGraphSCC &SCC)
 {
-    CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
+    //CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
     //Module & m = CG.getModule();
-    int sccNum = 0;
 
     if (SCC.size() == 0) return true;
 
+    // SCC iterator (on function level)
+    // Because we do not allow mutual recursion, this should be a tree of
+    // trivial SCCs (loopless singleton SCCs)
     CallGraphNode* const node = *(SCC.begin());
     printNode (node, SCC);
 
-    Function* F = node->getFunction ();
+    Function *F = node->getFunction ();
     if (!F || F->getBasicBlockList().empty()) return true;
 
-    errs() << "SCCs for Function " << F->getName() << " in PostOrder:";
-    for (scc_iterator<Function*> SCCI = scc_begin(F); !SCCI.isAtEnd(); ++SCCI) {
-        const std::vector<BasicBlock *> &nextSCC = *SCCI;
-        errs() << "\nSCC #" << ++sccNum << " : ";
 
-        int index_pre = indicesIndex;
-        for (BasicBlock *bb : nextSCC) {
-            errs() << bb->getName() << ", ";
+    // SCC iterator (on block level) within function F
+    for (scc_iterator<Function*> blocks = scc_begin(F); !blocks.isAtEnd(); ++blocks) {
+
+        for (BasicBlock *bb : *blocks) {
+            // All instructions in an SCC block have equivalent reachability
+            // properties (Observation 2 in Purdom's Transitive Closure paper).
+            SCCI *nSCC = addSCC((*blocks).size () > 1 || blocks.hasLoop ());
+
+            addBlock(nSCC, bb);
             for (Instruction &I : *bb) {
-                errs() << I.getName() << ", ";
-                addInstruction (I);
+                addInstruction(nSCC, I);
             }
-        }
-
-        reach.grow(indicesIndex, indicesIndex);
-        // All instructions in an SCC block have equivalent reachability
-        // properties (Observation 2 in Purdom's Transitive Closure paper).
-        for (int i = index_pre; i < indicesIndex; i++) {
-            for (int j = index_pre; j < indicesIndex; j++) {
-                reach.set(i, j);
-            }
-        }
-
-        if (nextSCC.size() == 1 && SCCI.hasLoop()) {
-            errs() << " (Has self-loop).";
         }
     }
 
+    // All SCCs below have been processed before and have unchanging reachability
+    // properties (Observation 1 in Purdom's Transitive Closure paper).
+    if (node->size() > 0)
     for (CallGraphNode::CallRecord rec : *node) {
         Function* callee = rec.second->getFunction ();
-        CallGraphNode *calleeNode = CG[callee];
+        if (callee->size() == 0) continue; //external library function
+        BasicBlock &callee_block = callee->getEntryBlock();
+
+        WeakVH first = rec.first;
+        llvm::Value &valPtr = *first;
+
+        Instruction *call_inst = dyn_cast<Instruction> (&valPtr);
+        assert (call_inst != nullptr);
+        BasicBlock *caller_block = call_inst->getParent();
+
+        SCCI *callee_scc = blockMap[&callee_block];
+        SCCI *caller_scc = blockMap[caller_block];
+        reach.set (caller_scc->index, callee_scc->index);
+        reach.copy (caller_scc->index, callee_scc->index);
     }
+
+    // SCC iterator (on block level) within function F
+    for (scc_iterator<Function*> blocks = scc_begin(F); !blocks.isAtEnd(); ++blocks) {
+
+        // All SCCs below have been processed before and have unchanging reachability
+        // properties (Observation 1 in Purdom's Transitive Closure paper).
+        for (BasicBlock *bb : *blocks) {
+            SCCI *bb_scc = blockMap[bb];
+            for (int i = 0, num = bb->getTerminator()->getNumSuccessors(); i < num; ++i) {
+                BasicBlock *succ = bb->getTerminator()->getSuccessor(i);
+                SCCI *succ_scc = blockMap[succ];
+                if (succ == bb) {
+                    assert (bb_scc->loops);
+                    continue;
+                }
+
+                reach.set (bb_scc->index, succ_scc->index);
+                reach.copy (bb_scc->index, succ_scc->index);
+            }
+        }
+    }
+
 
     return true;
 }
+}
+
+using namespace VVT;
 
 int
 main( int argc, const char* argv[] )
@@ -292,5 +378,5 @@ main( int argc, const char* argv[] )
 
 //    CallGraph &cfg = cfgpass->getCallGraph();
 
-
 }
+
