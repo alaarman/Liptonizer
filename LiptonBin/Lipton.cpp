@@ -170,20 +170,22 @@ private:
 
     SCCI *addSCC (bool loops);
     void addInstruction (SCCI *scc, Instruction& I);
-    void addBlock (SCCI *scc, BasicBlock *I);
+    SCCI *addBlock (BasicBlock *I, bool loops);
 };
 
 
 char Reach::ID = 0;
 static RegisterPass<Reach> X("reach", "Walk CFG");
 
-void
-Reach::addBlock (SCCI *scc, BasicBlock *bb)
+SCCI *
+Reach::addBlock (BasicBlock *bb, bool loops)
 {
+    SCCI *scc = addSCC(bb->size() > 1 || loops);
     if (!blockMap.insert( make_pair(bb, scc) ).second) {
         outs () << "Instruction added twice: " << *bb;
         exit (1);
     }
+    return scc;
 }
 
 void
@@ -268,9 +270,8 @@ Reach::runOnSCC(CallGraphSCC &SCC)
         for (BasicBlock *bb : *blocks) {
             // All instructions in an SCC block have equivalent reachability
             // properties (Observation 2 in Purdom's Transitive Closure paper).
-            SCCI *nSCC = addSCC((*blocks).size () > 1 || blocks.hasLoop ());
+            SCCI *nSCC = addBlock(bb, blocks.hasLoop());
 
-            addBlock(nSCC, bb);
             for (Instruction &I : *bb) {
                 addInstruction(nSCC, I);
             }
