@@ -55,30 +55,32 @@ namespace VVT {
 
 class BitMatrix {
     vector<char *> rows;
-    int C,R;
+    int ColSize,RowSize;
+    int ColsMax,RowsMax;
 
 public:
     BitMatrix(int init_cols, int init_rows) {
-        C = init_cols;
-        R = init_rows;
-        int x = (init_cols + 7) >> 3;
-        for (int row = 0; row < R; row++) {
+        ColsMax = init_cols;
+        RowsMax = init_rows;
+        ColSize = RowSize = 0;
+        int x = (ColsMax + 7) >> 3;
+        for (int row = 0; row < RowsMax; row++) {
             char* c = (char*)(calloc (x, 1));
             rows.push_back (c); // initialized to 0
         }
     }
 
     inline void copy (int row_to, int row) {
-        assert (row_to < R && row < R);
+        assert (row_to < RowSize && row < RowSize);
         assert (row_to != row);
-        int col_size = (R + 7) >> 3;
+        int col_size = (RowSize + 7) >> 3;
         for (int col_high = 0; col_high < col_size; col_high++) {
             rows[row_to][col_high] |= rows[row][col_high];
         }
     }
 
     inline bool set (int col, int row) {
-        assert (col < C && row < R);
+        assert (col < ColSize && row < RowSize);
 
         int col_low = col & 7;
         int col_high = col >> 3;
@@ -88,7 +90,7 @@ public:
     }
 
     inline bool get (int col, int row) {
-        assert (col < C && row < R);
+        assert (col < ColSize && row < RowSize);
 
         int col_low = col & 7;
         int col_high = col >> 3;
@@ -96,29 +98,49 @@ public:
         return res != 0;
     }
 
-    void grow (int new_cols, int new_rows) {
-        assert (new_cols > C && new_rows > R);
-        int col_size = (new_cols + 7) >> 3;
+    void ensure (int new_cols, int new_rows) {
+        assert ((new_cols > ColSize && new_rows  > RowSize) ||
+                (new_cols > ColSize && new_rows == RowSize) ||
+                (new_rows > RowSize && new_cols == ColSize));
 
-        for (int i = 0; i < R; i++) {
+        ColSize = new_cols;
+        RowSize = new_rows;
+        if (new_cols < ColsMax && new_rows < RowsMax)
+            return;
+
+        // exponential growth:
+        int new_rows2 = (new_rows >= RowsMax ? new_rows * 2 : new_rows );
+        int new_cols2 = (new_cols >= ColsMax ? new_cols * 2 : new_cols );
+
+//errs () << "Size "<< RowSize <<"X"<< ColSize <<" to "<< new_rows <<"X"<< new_cols <<"\n";
+//errs () << "Grow "<< RowsMax <<"X"<< ColsMax <<" to "<< new_rows2 <<"X"<< new_cols2 <<"\n";
+
+        int col_size = (new_cols2 + 7) >> 3;
+
+        // extend columns in existing rows
+        if (new_rows >= RowsMax)
+        for (int i = 0; i < RowsMax; i++) {
             char *m = rows[i];
             rows[i] = (char *)calloc(col_size, 1); // initialized to 0
-            int Xb = (C + 7) >> 3;
-            memcpy(rows[i], m, Xb);
+            int Xb = (ColSize + 7) >> 3;
+            memcpy (rows[i], m, Xb);
             delete m;
         }
-        for (int i = R; i < new_rows; i++) {
-            char* c = (char*)(calloc (col_size, 1));
+
+        // extend rows
+        if (new_rows >= RowsMax)
+        for (int i = RowSize; i < new_rows2; i++) {
+            char *c = (char *)(calloc (col_size, 1));
             rows.push_back (c); // initialized to 0
         }
 
-        C = new_cols;
-        R = new_rows;
+        ColsMax = new_cols2;
+        RowsMax = new_rows2;
     }
 
     void print () {
-        for (int row = 0; row < R; row++) {
-            for (int col = 0; col < C; col++) {
+        for (int row = 0; row < RowSize; row++) {
+            for (int col = 0; col < ColSize; col++) {
                 outs() << (get(col, row) ? "1," : "0,");
             }
             outs() << "\n";
@@ -143,7 +165,7 @@ public:
     DenseMap<Instruction *, SCCI *> instructionMap;
     DenseMap<BasicBlock *, SCCI *> blockMap;
 
-    Reach() : CallGraphSCCPass(ID), reach(0,0) { }
+    Reach() : CallGraphSCCPass(ID), reach(1,1) { }
 
     static char ID;
 
@@ -201,7 +223,8 @@ SCCI *
 Reach::addSCC (bool loops)
 {
     SCCI *scci = new SCCI (indicesIndex++, loops);
-    reach.grow(indicesIndex, indicesIndex);
+//errs () <<  indicesIndex << " << " << scci->index << "\n";
+    reach.ensure(indicesIndex, indicesIndex);
     if (loops)
         reach.set (scci->index, scci->index); // reflexive reachability properties
     return scci;
