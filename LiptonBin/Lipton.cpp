@@ -35,6 +35,8 @@
 
 #include <llvm/PassManager.h>
 
+#include "util/BitMatrix.h"
+
 using namespace llvm;
 using namespace std;
 
@@ -52,102 +54,6 @@ get_name(Function const *f)
 }
 
 namespace VVT {
-
-class BitMatrix {
-    vector<char *> rows;
-    int ColSize,RowSize;
-    int ColsMax,RowsMax;
-
-public:
-    BitMatrix(int init_cols, int init_rows) {
-        ColsMax = init_cols;
-        RowsMax = init_rows;
-        ColSize = RowSize = 0;
-        int x = (ColsMax + 7) >> 3;
-        for (int row = 0; row < RowsMax; row++) {
-            char* c = (char*)(calloc (x, 1));
-            rows.push_back (c); // initialized to 0
-        }
-    }
-
-    inline void copy (int row_to, int row) {
-        assert (row_to < RowSize && row < RowSize);
-        assert (row_to != row);
-        int col_size = (RowSize + 7) >> 3;
-        for (int col_high = 0; col_high < col_size; col_high++) {
-            rows[row_to][col_high] |= rows[row][col_high];
-        }
-    }
-
-    inline bool set (int col, int row) {
-        assert (col < ColSize && row < RowSize);
-
-        int col_low = col & 7;
-        int col_high = col >> 3;
-        int res = rows[row][col_high] & (1 << col_low);
-        rows[row][col_high] |= (1 << col_low);
-        return res != 0;
-    }
-
-    inline bool get (int col, int row) {
-        assert (col < ColSize && row < RowSize);
-
-        int col_low = col & 7;
-        int col_high = col >> 3;
-        int res = rows[row][col_high] & (1<<col_low);
-        return res != 0;
-    }
-
-    void ensure (int new_cols, int new_rows) {
-        assert ((new_cols > ColSize && new_rows  > RowSize) ||
-                (new_cols > ColSize && new_rows == RowSize) ||
-                (new_rows > RowSize && new_cols == ColSize));
-
-        ColSize = new_cols;
-        RowSize = new_rows;
-        if (new_cols < ColsMax && new_rows < RowsMax)
-            return;
-
-        // exponential growth:
-        int new_rows2 = (new_rows >= RowsMax ? new_rows * 2 : new_rows );
-        int new_cols2 = (new_cols >= ColsMax ? new_cols * 2 : new_cols );
-
-//errs () << "Size "<< RowSize <<"X"<< ColSize <<" to "<< new_rows <<"X"<< new_cols <<"\n";
-//errs () << "Grow "<< RowsMax <<"X"<< ColsMax <<" to "<< new_rows2 <<"X"<< new_cols2 <<"\n";
-
-        int col_size = (new_cols2 + 7) >> 3;
-
-        // extend columns in existing rows
-        if (new_rows >= RowsMax)
-        for (int i = 0; i < RowsMax; i++) {
-            char *m = rows[i];
-            rows[i] = (char *)calloc(col_size, 1); // initialized to 0
-            int Xb = (ColSize + 7) >> 3;
-            memcpy (rows[i], m, Xb);
-            delete m;
-        }
-
-        // extend rows
-        if (new_rows >= RowsMax)
-        for (int i = RowSize; i < new_rows2; i++) {
-            char *c = (char *)(calloc (col_size, 1));
-            rows.push_back (c); // initialized to 0
-        }
-
-        ColsMax = new_cols2;
-        RowsMax = new_rows2;
-    }
-
-    void print () {
-        for (int row = 0; row < RowSize; row++) {
-            for (int col = 0; col < ColSize; col++) {
-                outs() << (get(col, row) ? "1," : "0,");
-            }
-            outs() << "\n";
-        }
-        outs() << "\n\n";
-    }
-};
 
 struct SCCI {
     SCCI(int i, bool l) :
@@ -170,7 +76,7 @@ public:
     static char ID;
 
     void pouts() {
-        reach.print();
+        reach.print(outs());
     }
 
 private:
