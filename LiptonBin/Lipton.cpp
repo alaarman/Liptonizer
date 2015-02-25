@@ -55,6 +55,7 @@ get_name(Function const *f)
 
 namespace VVT {
 
+
 struct SCCI {
     SCCI(int i, bool l) :
         index(i),
@@ -64,24 +65,63 @@ struct SCCI {
     bool    loops;
 };
 
+//template<class T>
+class SCCQuotientGraph {
+
+    DenseMap<BasicBlock *, SCCI *> blockMap;
+    int indicesIndex = 0;
+    BitMatrix reach;
+    char *locked;
+
+
+public:
+    SCCQuotientGraph() :
+        reach(1,1)
+    {
+        locked = new char[1024]();
+    }
+
+    SCCI *addSCC (bool loops);
+    //template<class T>
+    SCCI *addBlock (BasicBlock *I, bool loops);
+    void pouts() {
+        reach.print(outs());
+    }
+
+    SCCI *operator[](BasicBlock *bb) {
+         return blockMap[bb];
+    }
+
+    void addLink (int x, int y) {
+        reach.set  (x, y);
+        reach.copy (x, y);
+
+    }
+
+    void addLink (BasicBlock *x, BasicBlock *y) {
+        SCCI *xscc = blockMap[x];
+        SCCI *yscc = blockMap[y];
+        addLink(xscc->index, yscc->index);
+    }
+};
+
 
 struct Reach : public CallGraphSCCPass {
 
 public:
     DenseMap<Instruction *, SCCI *> instructionMap;
-    DenseMap<BasicBlock *, SCCI *> blockMap;
 
-    Reach() : CallGraphSCCPass(ID), reach(1,1) { }
+    SCCQuotientGraph blockQuotient;
+
+    Reach() : CallGraphSCCPass(ID) { }
 
     static char ID;
 
     void pouts() {
-        reach.print(outs());
+        blockQuotient.pouts();
     }
 
 private:
-    int indicesIndex = 0;
-    BitMatrix reach;
     int sccNum = 0;
 
     //DenseSet<const Function *> functions;
@@ -96,9 +136,8 @@ private:
 
     void printNode (CallGraphNode* const node, CallGraphSCC& SCC);
 
-    SCCI *addSCC (bool loops);
     void addInstruction (SCCI *scc, Instruction& I);
-    SCCI *addBlock (BasicBlock *I, bool loops);
+
 };
 
 
@@ -106,9 +145,9 @@ char Reach::ID = 0;
 static RegisterPass<Reach> X("reach", "Walk CFG");
 
 SCCI *
-Reach::addBlock (BasicBlock *bb, bool loops)
+SCCQuotientGraph::addBlock (BasicBlock *bb, bool loops)
 {
-    SCCI *scc = addSCC(bb->size() > 1 || loops);
+    SCCI *scc = addSCC(loops);
     if (!blockMap.insert( make_pair(bb, scc) ).second) {
         outs () << "Instruction added twice: " << *bb;
         exit (1);
@@ -126,7 +165,7 @@ Reach::addInstruction (SCCI *scc, Instruction& I)
 }
 
 SCCI *
-Reach::addSCC (bool loops)
+SCCQuotientGraph::addSCC (bool loops)
 {
     SCCI *scci = new SCCI (indicesIndex++, loops);
 //errs () <<  indicesIndex << " << " << scci->index << "\n";
@@ -136,44 +175,6 @@ Reach::addSCC (bool loops)
     return scci;
 }
 
-void
-Reach::printNode (CallGraphNode* const node, CallGraphSCC& SCC)
-{
-    Function* F = node->getFunction ();
-    if (SCC.size () > 1) {
-        outs () << "Mutual recursion not supported: " << get_name (F);
-        exit (1);
-    }
-    outs () << get_name (F) << " calls: ";
-    for (CallGraphNode::CallRecord rec : *node) {
-        Function* callee = rec.second->getFunction ();
-        outs () << get_name (callee) << ", ";
-        if (get_name (callee) == get_name (F)) {
-            outs () << "Mutual recursion not supported: " << get_name (F);
-            exit (1);
-        }
-    }
-    errs () << "\n";
-
-    if (!F || F->getBasicBlockList().empty()) return;
-    errs() << "SCCs for Function " <<  get_name (F) << " in PostOrder:";
-    for (scc_iterator<Function *> SCCI = scc_begin(F); !SCCI.isAtEnd(); ++SCCI) {
-        const std::vector<BasicBlock *> &nextSCC = *SCCI;
-        errs() << "\nSCC #" << ++sccNum << " : ";
-
-        for (BasicBlock *bb : nextSCC) {
-            errs() << bb->getName() << ", ";
-            for (Instruction &I : *bb) {
-                errs() << I.getName() << ", ";
-            }
-        }
-
-        if (nextSCC.size() == 1 && SCCI.hasLoop()) {
-            errs() << " (Has self-loop).";
-        }
-    }
-    errs () << "\n";
-}
 
 bool
 Reach::runOnSCC(CallGraphSCC &SCC)
@@ -199,7 +200,7 @@ Reach::runOnSCC(CallGraphSCC &SCC)
         for (BasicBlock *bb : *blocks) {
             // All instructions in an SCC block have equivalent reachability
             // properties (Observation 2 in Purdom's Transitive Closure paper).
-            SCCI *nSCC = addBlock(bb, blocks.hasLoop());
+            SCCI *nSCC = blockQuotient.addBlock(bb, bb->size() > 1 || blocks.hasLoop());
 
             for (Instruction &I : *bb) {
                 addInstruction(nSCC, I);
@@ -222,10 +223,9 @@ Reach::runOnSCC(CallGraphSCC &SCC)
         assert (call_inst != nullptr);
         BasicBlock *caller_block = call_inst->getParent();
 
-        SCCI *callee_scc = blockMap[&callee_block];
-        SCCI *caller_scc = blockMap[caller_block];
-        reach.set (caller_scc->index, callee_scc->index);
-        reach.copy (caller_scc->index, callee_scc->index);
+        SCCI *callee_scc = blockQuotient[&callee_block];
+        SCCI *caller_scc = blockQuotient[caller_block];
+        blockQuotient.addLink (caller_scc->index, callee_scc->index);
     }
 
     // SCC iterator (on block level) within function F
@@ -234,17 +234,16 @@ Reach::runOnSCC(CallGraphSCC &SCC)
         // All SCCs below have been processed before and have unchanging reachability
         // properties (Observation 1 in Purdom's Transitive Closure paper).
         for (BasicBlock *bb : *blocks) {
-            SCCI *bb_scc = blockMap[bb];
+            SCCI *bb_scc = blockQuotient[bb];
             for (int i = 0, num = bb->getTerminator()->getNumSuccessors(); i < num; ++i) {
                 BasicBlock *succ = bb->getTerminator()->getSuccessor(i);
-                SCCI *succ_scc = blockMap[succ];
+                SCCI *succ_scc = blockQuotient[succ];
                 if (succ == bb) {
                     assert (bb_scc->loops);
                     continue;
                 }
 
-                reach.set (bb_scc->index, succ_scc->index);
-                reach.copy (bb_scc->index, succ_scc->index);
+                blockQuotient.addLink (bb_scc->index, succ_scc->index);
             }
         }
     }
@@ -310,3 +309,42 @@ main( int argc, const char* argv[] )
 
 }
 
+
+void
+Reach::printNode (CallGraphNode* const node, CallGraphSCC& SCC)
+{
+    Function* F = node->getFunction ();
+    if (SCC.size () > 1) {
+        outs () << "Mutual recursion not supported: " << get_name (F);
+        exit (1);
+    }
+    outs () << get_name (F) << " calls: ";
+    for (CallGraphNode::CallRecord rec : *node) {
+        Function* callee = rec.second->getFunction ();
+        outs () << get_name (callee) << ", ";
+        if (get_name (callee) == get_name (F)) {
+            outs () << "Mutual recursion not supported: " << get_name (F);
+            exit (1);
+        }
+    }
+    errs () << "\n";
+
+    if (!F || F->getBasicBlockList().empty()) return;
+    errs() << "SCCs for Function " <<  get_name (F) << " in PostOrder:";
+    for (scc_iterator<Function *> SCCI = scc_begin(F); !SCCI.isAtEnd(); ++SCCI) {
+        const std::vector<BasicBlock *> &nextSCC = *SCCI;
+        errs() << "\nSCC #" << ++sccNum << " : ";
+
+        for (BasicBlock *bb : nextSCC) {
+            errs() << bb->getName() << ", ";
+            for (Instruction &I : *bb) {
+                errs() << I.getName() << ", ";
+            }
+        }
+
+        if (nextSCC.size() == 1 && SCCI.hasLoop()) {
+            errs() << " (Has self-loop).";
+        }
+    }
+    errs () << "\n";
+}
