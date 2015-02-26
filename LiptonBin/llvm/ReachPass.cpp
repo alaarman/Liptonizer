@@ -15,8 +15,8 @@
 #include <llvm/ADT/DenseMap.h>
 
 
-#include "../util/BitMatrix.h"
-#include "../util/Util.h"
+#include "util/BitMatrix.h"
+#include "util/Util.h"
 
 #include "ReachPass.h"
 

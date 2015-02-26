@@ -3,7 +3,7 @@
 
 #include <llvm/ADT/DenseMap.h>
 
-#include "BitMatrix.h"
+#include "util/BitMatrix.h"
 
 using namespace llvm;
 

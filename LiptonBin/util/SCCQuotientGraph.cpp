@@ -2,8 +2,8 @@
 #include <iostream>
 #include <string>
 
-#include "SCCQuotientGraph.h"
-#include "Util.h"
+#include "util/SCCQuotientGraph.h"
+#include "util/Util.h"
 
 using namespace std;
 

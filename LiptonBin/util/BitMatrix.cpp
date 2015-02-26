@@ -3,8 +3,8 @@
 #include <iostream>
 #include <string>
 
-#include "BitMatrix.h"
-#include "Util.h"
+#include "util/BitMatrix.h"
+#include "util/Util.h"
 
 
 using namespace std;
