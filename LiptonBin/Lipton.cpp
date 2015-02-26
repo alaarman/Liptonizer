@@ -36,6 +36,7 @@
 #include <llvm/PassManager.h>
 
 #include "util/BitMatrix.h"
+#include "util/Util.h"
 
 using namespace llvm;
 using namespace std;
@@ -61,8 +62,9 @@ struct SCCI {
         index(i),
         loops(l) {};
 
-    int     index;
-    bool    loops;
+    int             index;
+    bool            loops;
+    BasicBlock     *bb = NULL;
 };
 
 //template<class T>
@@ -71,40 +73,83 @@ class SCCQuotientGraph {
     DenseMap<BasicBlock *, SCCI *> blockMap;
     int indicesIndex = 0;
     BitMatrix reach;
-    char *locked;
-
+    BitVector locked;
 
 public:
     SCCQuotientGraph() :
         reach(1,1)
-    {
-        locked = new char[1024]();
-    }
+    { }
 
-    SCCI *addSCC (bool loops);
-    //template<class T>
-    SCCI *addBlock (BasicBlock *I, bool loops);
-    void pouts() {
-        reach.print(outs());
-    }
 
     SCCI *operator[](BasicBlock *bb) {
          return blockMap[bb];
     }
 
-    void addLink (int x, int y) {
-        reach.set  (x, y);
-        reach.copy (x, y);
-
-    }
-
-    void addLink (BasicBlock *x, BasicBlock *y) {
-        SCCI *xscc = blockMap[x];
-        SCCI *yscc = blockMap[y];
-        addLink(xscc->index, yscc->index);
-    }
+    void addLink (SCCI *x, SCCI *y);
+    void addLink (BasicBlock *x, BasicBlock *y);
+    void addLink (BasicBlock *x, SCCI *y);
+    SCCI *addSCC (bool loops);
+    //template<class T>
+    SCCI *addBlock (BasicBlock *I, bool loops);
+    void pouts();
 };
 
+
+void
+SCCQuotientGraph::addLink (SCCI *x, SCCI *y)
+{
+    assert (x != y);
+    ASSERT (!locked[x->index], "SCCs not linked in post-order: "<< x->bb << " >< "<< y->bb);
+
+    reach.set  (x->index, y->index);
+    reach.copy (x->index, y->index);
+    locked[y->index];
+}
+
+void
+SCCQuotientGraph::addLink (BasicBlock *x, BasicBlock *y)
+{
+    SCCI *xscc = blockMap[x];
+    SCCI *yscc = blockMap[y];
+    addLink(xscc, yscc);
+}
+
+void
+SCCQuotientGraph::addLink (BasicBlock *x, SCCI *y)
+{
+    SCCI *xscc = blockMap[x];
+    addLink(xscc, y);
+}
+
+SCCI *
+SCCQuotientGraph::addBlock (BasicBlock *bb, bool loops)
+{
+    SCCI *scc = addSCC(loops);
+    scc->bb = bb;
+    if (!blockMap.insert( make_pair(bb, scc) ).second) {
+        outs () << "Instruction added twice: " << *bb;
+        exit (1);
+    }
+    return scc;
+}
+
+SCCI *
+SCCQuotientGraph::addSCC (bool loops)
+{
+    SCCI *scci = new SCCI (indicesIndex++, loops);
+//errs () <<  indicesIndex << " << " << scci->index << "\n";
+    reach.ensure(indicesIndex, indicesIndex);
+    locked.ensure(indicesIndex);
+    if (loops)
+        reach.set (scci->index, scci->index); // reflexive reachability properties
+    return scci;
+}
+
+void
+SCCQuotientGraph::pouts()
+{
+       reach.print(outs());
+}
 
 struct Reach : public CallGraphSCCPass {
 
@@ -144,17 +189,6 @@ private:
 char Reach::ID = 0;
 static RegisterPass<Reach> X("reach", "Walk CFG");
 
-SCCI *
-SCCQuotientGraph::addBlock (BasicBlock *bb, bool loops)
-{
-    SCCI *scc = addSCC(loops);
-    if (!blockMap.insert( make_pair(bb, scc) ).second) {
-        outs () << "Instruction added twice: " << *bb;
-        exit (1);
-    }
-    return scc;
-}
-
 void
 Reach::addInstruction (SCCI *scc, Instruction& I)
 {
@@ -163,18 +197,6 @@ Reach::addInstruction (SCCI *scc, Instruction& I)
         exit (1);
     }
 }
-
-SCCI *
-SCCQuotientGraph::addSCC (bool loops)
-{
-    SCCI *scci = new SCCI (indicesIndex++, loops);
-//errs () <<  indicesIndex << " << " << scci->index << "\n";
-    reach.ensure(indicesIndex, indicesIndex);
-    if (loops)
-        reach.set (scci->index, scci->index); // reflexive reachability properties
-    return scci;
-}
-
 
 bool
 Reach::runOnSCC(CallGraphSCC &SCC)
@@ -225,7 +247,7 @@ Reach::runOnSCC(CallGraphSCC &SCC)
 
         SCCI *callee_scc = blockQuotient[&callee_block];
         SCCI *caller_scc = blockQuotient[caller_block];
-        blockQuotient.addLink (caller_scc->index, callee_scc->index);
+        blockQuotient.addLink (caller_scc, callee_scc);
     }
 
     // SCC iterator (on block level) within function F
@@ -243,7 +265,7 @@ Reach::runOnSCC(CallGraphSCC &SCC)
                     continue;
                 }
 
-                blockQuotient.addLink (bb_scc->index, succ_scc->index);
+                blockQuotient.addLink (bb_scc, succ_scc);
             }
         }
     }
@@ -304,6 +326,8 @@ main( int argc, const char* argv[] )
     PM.run (*m);
 
     reach->pouts();
+
+    delete reach;
 
 //    CallGraph &cfg = cfgpass->getCallGraph();
 
