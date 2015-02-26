@@ -1,9 +1,13 @@
 #ifndef LIPTONBIN_UTIL_SCCQUOTIENTGRAPH_H_
 #define LIPTONBIN_UTIL_SCCQUOTIENTGRAPH_H_
 
-#include <llvm/ADT/DenseMap.h>
 
 #include "util/BitMatrix.h"
+
+#include <vector>
+
+#include <llvm/ADT/DenseMap.h>
+
 
 using namespace llvm;
 
@@ -12,13 +16,14 @@ namespace VVT {
 
 template<typename T>
 struct SCCX {
-    SCCX(int i, bool l) :
+    SCCX(int i, bool l, T *t) :
         index(i),
-        loops(l) {};
+        loops(l),
+        object(t) {};
 
     int             index;
     bool            loops;
-    T              *bb = NULL;
+    T              *object;
 };
 
 template<typename T>
@@ -29,9 +34,12 @@ public:
 
 private:
     DenseMap<T *, SCCI *> blockMap;
-    int indicesIndex = 0;
+    vector<T *> objects;
+    //int indicesIndex = 0;
     BitMatrix reach;
     BitVector locked;
+
+    SCCI *createSCC (bool loops, T *t);
 
 public:
     SCCQuotientGraph() :
@@ -40,11 +48,10 @@ public:
 
     SCCI *operator[] (T *bb);
 
-    void addLink (SCCI *x, SCCI *y);
-    void addLink (T *x, T *y);
-    void addLink (T *x, SCCI *y);
-    SCCI *addSCC (bool loops);
-    SCCI *addBlock (T *I, bool loops);
+    void link (SCCI *x, SCCI *y);
+    void link (T *x, T *y);
+    void link (T *x, SCCI *y);
+    SCCI *add (T *t, bool loops);
     void print();
 };
 

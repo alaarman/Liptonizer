@@ -24,10 +24,7 @@ using namespace VVT;
 int
 main( int argc, const char* argv[] )
 {
-    if (argc != 2) {
-        cout << "Require an argument. Pass a .ll or .bc file (argc = "<< argc <<").\n" ;
-        exit(1);
-    }
+    ASSERT (argc == 2, "Require an argument. Pass a .ll or .bc file (argc = "<< argc <<").\n");
 
     string ll(argv[1]);
     Module *m;

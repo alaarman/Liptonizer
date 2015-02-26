@@ -3,6 +3,9 @@
 #include <iostream>
 #include <string>
 
+#include <llvm/Pass.h>
+#include <llvm/PassRegistry.h>
+#include <llvm/PassSupport.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Function.h>
@@ -39,10 +42,8 @@ void
 ReachPass::addInstruction (SCCX<BasicBlock> *scc, Instruction *I)
 {
     pair<Instruction *, SCCX<BasicBlock> *> makePair = make_pair (I, scc);
-    if (!instructionMap.insert (makePair).second) {
-        outs () << "Instruction added twice: " << I;
-        exit (1);
-    }
+    bool seen = instructionMap.insert (makePair).second;
+    ASSERT (seen, "Instruction added twice: " << I);
 }
 
 bool
@@ -57,6 +58,7 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
     // Because we do not allow mutual recursion, this should be a tree of
     // trivial SCCs (loopless singleton SCCs)
     CallGraphNode* const node = *(SCC.begin());
+    checkNode (node, SCC);
     printNode (node, SCC);
 
     Function *F = node->getFunction ();
@@ -69,7 +71,7 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
         for (BasicBlock *bb : *blocks) {
             // All instructions in an SCC block have equivalent reachability
             // properties (Observation 2 in Purdom's Transitive Closure paper).
-            SCCX<BasicBlock> *nSCC = blockQuotient.addBlock(bb, bb->size() > 1 || blocks.hasLoop());
+            SCCX<BasicBlock> *nSCC = blockQuotient.add(bb, bb->size() > 1 || blocks.hasLoop());
 
             for (Instruction &I : *bb) {
                 addInstruction(nSCC, &I);
@@ -94,7 +96,7 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
 
         SCCX<BasicBlock> *callee_scc = blockQuotient[&callee_block];
         SCCX<BasicBlock> *caller_scc = blockQuotient[caller_block];
-        blockQuotient.addLink (caller_scc, callee_scc);
+        blockQuotient.link (caller_scc, callee_scc);
     }
 
     // SCC iterator (on block level) within function F
@@ -112,7 +114,7 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
                     continue;
                 }
 
-                blockQuotient.addLink (bb_scc, succ_scc);
+                blockQuotient.link (bb_scc, succ_scc);
             }
         }
     }
@@ -121,21 +123,39 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
 }
 
 void
+ReachPass::printClosure() {
+    blockQuotient.print ();
+}
+
+void
+ReachPass::getAnalysisUsage(AnalysisUsage &AU) const {
+    AU.setPreservesAll();
+    AU.addRequired<CallGraphWrapperPass>();
+}
+
+void
+ReachPass::checkNode (CallGraphNode* const node, CallGraphSCC& SCC)
+{
+    Function* F = node->getFunction ();
+    string fname = get_name(F);
+    ASSERT (SCC.size() == 1, "Mutual recursion not supported: " << fname);
+
+    for (CallGraphNode::CallRecord rec : *node) {
+        Function* callee = rec.second->getFunction ();
+        ASSERT (get_name(callee) != fname,
+                "Mutual recursion not supported: " << fname);
+    }
+}
+
+void
 ReachPass::printNode (CallGraphNode* const node, CallGraphSCC& SCC)
 {
     Function* F = node->getFunction ();
-    if (SCC.size () > 1) {
-        outs () << "Mutual recursion not supported: " << get_name (F);
-        exit (1);
-    }
+
     outs () << get_name (F) << " calls: ";
     for (CallGraphNode::CallRecord rec : *node) {
         Function* callee = rec.second->getFunction ();
         outs () << get_name (callee) << ", ";
-        if (get_name (callee) == get_name (F)) {
-            outs () << "Mutual recursion not supported: " << get_name (F);
-            exit (1);
-        }
     }
     errs () << "\n";
 

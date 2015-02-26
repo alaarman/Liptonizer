@@ -18,10 +18,10 @@ SCCQuotientGraph<T>::operator[](T *bb) {
 
 template<class T>
 void
-SCCQuotientGraph<T>::addLink (SCCI *x, SCCI *y)
+SCCQuotientGraph<T>::link (SCCI *x, SCCI *y)
 {
     assert (x != y);
-    ASSERT (!locked[x->index], "SCCs not linked in post-order: "<< x->bb << " >< "<< y->bb);
+    ASSERT (!locked[x->index], "SCCs not linked in post-order: "<< x->object << " >< "<< y->object);
 
     reach.set  (x->index, y->index);
     reach.copy (x->index, y->index);
@@ -30,29 +30,31 @@ SCCQuotientGraph<T>::addLink (SCCI *x, SCCI *y)
 
 template<class T>
 void
-SCCQuotientGraph<T>::addLink (T *x, T *y)
+SCCQuotientGraph<T>::link (T *x, T *y)
 {
     SCCI *xscc = blockMap[x];
     SCCI *yscc = blockMap[y];
-    addLink(xscc, yscc);
+    link(xscc, yscc);
 }
 
 template<class T>
 void
-SCCQuotientGraph<T>::addLink (T *x, SCCI *y)
+SCCQuotientGraph<T>::link (T *x, SCCI *y)
 {
     SCCI *xscc = blockMap[x];
-    addLink(xscc, y);
+    link(xscc, y);
 }
 
 template<class T>
 typename SCCQuotientGraph<T>::SCCI *
-SCCQuotientGraph<T>::addSCC (bool loops)
+SCCQuotientGraph<T>::createSCC (bool loops)
 {
-    SCCI *scci = new SCCI (indicesIndex++, loops);
+    SCCI *scci = new SCCI (objects.size(), loops);
+    objects.push_back(t);
+    size_t next = objects.size();
 //errs () <<  indicesIndex << " << " << scci->index << "\n";
-    reach.ensure(indicesIndex, indicesIndex);
-    locked.ensure(indicesIndex);
+    reach.ensure(next, next);
+    locked.ensure(next);
     if (loops)
         reach.set (scci->index, scci->index); // reflexive reachability properties
     return scci;
@@ -60,14 +62,13 @@ SCCQuotientGraph<T>::addSCC (bool loops)
 
 template<class T>
 typename SCCQuotientGraph<T>::SCCI *
-SCCQuotientGraph<T>::addBlock (T *bb, bool loops)
+SCCQuotientGraph<T>::add (T *t, bool loops)
 {
-    SCCI *scc = addSCC(loops);
-    scc->bb = bb;
-    pair<T *, SCCI *> p = make_pair (bb, (SCCI *)scc);
+    SCCI *scc = createSCC(loops, t);
+    pair<T *, SCCI *> p = make_pair (t, (SCCI *)scc);
 
     bool seen = blockMap.insert( p ).second;
-    ASSERT (seen, "Instruction added twice: " << bb);
+    ASSERT (seen, "Instruction added twice: " << t);
 
     return scc;
 }
