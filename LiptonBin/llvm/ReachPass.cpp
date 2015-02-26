@@ -17,11 +17,10 @@
 
 #include <llvm/ADT/DenseMap.h>
 
+#include "ReachPass.h"
 
 #include "util/BitMatrix.h"
 #include "util/Util.h"
-
-#include "ReachPass.h"
 
 using namespace llvm;
 using namespace std;
@@ -39,9 +38,9 @@ char ReachPass::ID = 0;
 static RegisterPass<ReachPass> X("reach", "Walk CFG");
 
 void
-ReachPass::addInstruction (SCCX<BasicBlock> *scc, Instruction *I)
+ReachPass::addInstruction (SCCI *scc, Instruction *I)
 {
-    pair<Instruction *, SCCX<BasicBlock> *> makePair = make_pair (I, scc);
+    pair<Instruction *, SCCI *> makePair = make_pair (I, scc);
     bool seen = instructionMap.insert (makePair).second;
     ASSERT (seen, "Instruction added twice: " << I);
 }
@@ -59,7 +58,6 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
     // trivial SCCs (loopless singleton SCCs)
     CallGraphNode* const node = *(SCC.begin());
     checkNode (node, SCC);
-    printNode (node, SCC);
 
     Function *F = node->getFunction ();
     if (!F || F->getBasicBlockList().empty()) return true;
@@ -71,13 +69,15 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
         for (BasicBlock *bb : *blocks) {
             // All instructions in an SCC block have equivalent reachability
             // properties (Observation 2 in Purdom's Transitive Closure paper).
-            SCCX<BasicBlock> *nSCC = blockQuotient.add(bb, bb->size() > 1 || blocks.hasLoop());
+            SCCI *nSCC = blockQuotient.add(bb, bb->size() > 1 || blocks.hasLoop());
 
             for (Instruction &I : *bb) {
                 addInstruction(nSCC, &I);
             }
         }
     }
+
+    printNode (node, SCC);
 
     // All SCCs below have been processed before and have unchanging reachability
     // properties (Observation 1 in Purdom's Transitive Closure paper).
@@ -94,8 +94,8 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
         assert (call_inst != nullptr);
         BasicBlock *caller_block = call_inst->getParent();
 
-        SCCX<BasicBlock> *callee_scc = blockQuotient[&callee_block];
-        SCCX<BasicBlock> *caller_scc = blockQuotient[caller_block];
+        SCCI *callee_scc = blockQuotient[&callee_block];
+        SCCI *caller_scc = blockQuotient[caller_block];
         blockQuotient.link (caller_scc, callee_scc);
     }
 
@@ -105,10 +105,10 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
         // All SCCs below have been processed before and have unchanging reachability
         // properties (Observation 1 in Purdom's Transitive Closure paper).
         for (BasicBlock *bb : *blocks) {
-            SCCX<BasicBlock> *bb_scc = blockQuotient[bb];
+            SCCI *bb_scc = blockQuotient[bb];
             for (int i = 0, num = bb->getTerminator()->getNumSuccessors(); i < num; ++i) {
                 BasicBlock *succ = bb->getTerminator()->getSuccessor(i);
-                SCCX<BasicBlock> *succ_scc = blockQuotient[succ];
+                SCCI *succ_scc = blockQuotient[succ];
                 if (succ == bb) {
                     assert (bb_scc->loops);
                     continue;
@@ -138,7 +138,7 @@ ReachPass::checkNode (CallGraphNode* const node, CallGraphSCC& SCC)
 {
     Function* F = node->getFunction ();
     string fname = get_name(F);
-    ASSERT (SCC.size() == 1, "Mutual recursion not supported: " << fname);
+    ASSERT (SCC.isSingular(), "Mutual recursion not supported: " << fname);
 
     for (CallGraphNode::CallRecord rec : *node) {
         Function* callee = rec.second->getFunction ();
@@ -166,7 +166,7 @@ ReachPass::printNode (CallGraphNode* const node, CallGraphSCC& SCC)
         errs() << "\nSCC #" << ++sccNum << " : ";
 
         for (BasicBlock *bb : nextSCC) {
-            errs() << bb->getName() << ", ";
+            errs() << bb->getName() << "("<< blockQuotient[bb]->index <<"), ";
             for (Instruction &I : *bb) {
                 errs() << I.getName() << ", ";
             }

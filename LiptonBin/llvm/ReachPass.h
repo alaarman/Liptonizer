@@ -8,7 +8,7 @@
 #ifndef LIPTONBIN_LLVM_REACHPASS_H_
 #define LIPTONBIN_LLVM_REACHPASS_H_
 
-#include "../util/SCCQuotientGraph.h"
+#include "util/SCCQuotientGraph.h"
 
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <llvm/IR/BasicBlock.h>
@@ -21,7 +21,7 @@ class ReachPass : public CallGraphSCCPass {
 
 public:
     static char ID;
-    DenseMap<Instruction *, SCCX<BasicBlock> *> instructionMap;
+    DenseMap<Instruction *, SCCI *> instructionMap;
     SCCQuotientGraph<BasicBlock> blockQuotient;
 
     ReachPass() : CallGraphSCCPass(ID) { }
@@ -37,7 +37,7 @@ private:
 
     void checkNode (CallGraphNode* const node, CallGraphSCC& SCC);
     void printNode (CallGraphNode* const node, CallGraphSCC& SCC);
-    void addInstruction (SCCX<BasicBlock> *scc, Instruction *I);
+    void addInstruction (SCCI *scc, Instruction *I);
 };
 
 

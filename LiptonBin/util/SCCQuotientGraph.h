@@ -1,3 +1,10 @@
+/**
+ * SCC Quotiont graph
+ *
+ * Nodes and arcs can be added simultaneously, as long as the links are
+ * added in post-order (keeping the complexity down by a linear factor).
+ */
+
 #ifndef LIPTONBIN_UTIL_SCCQUOTIENTGRAPH_H_
 #define LIPTONBIN_UTIL_SCCQUOTIENTGRAPH_H_
 
@@ -14,32 +21,26 @@ using namespace llvm;
 namespace VVT {
 
 
-template<typename T>
-struct SCCX {
-    SCCX(int i, bool l, T *t) :
+struct SCCI {
+    SCCI(int i, bool l) :
         index(i),
-        loops(l),
-        object(t) {};
+        loops(l)
+    { };
 
     int             index;
     bool            loops;
-    T              *object;
 };
 
 template<typename T>
 class SCCQuotientGraph {
 
-public:
-    typedef SCCX<T> SCCI;
-
 private:
     DenseMap<T *, SCCI *> blockMap;
     vector<T *> objects;
-    //int indicesIndex = 0;
     BitMatrix reach;
     BitVector locked;
 
-    SCCI *createSCC (bool loops, T *t);
+    SCCI *createSCC (T *t, bool loops);
 
 public:
     SCCQuotientGraph() :
@@ -47,6 +48,8 @@ public:
     { }
 
     SCCI *operator[] (T *bb);
+    T    *operator[] (SCCI *scc);
+    T    *operator[] (int index);
 
     void link (SCCI *x, SCCI *y);
     void link (T *x, T *y);

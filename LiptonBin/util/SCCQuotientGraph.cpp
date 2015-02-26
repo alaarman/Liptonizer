@@ -11,9 +11,21 @@ using namespace std;
 namespace VVT {
 
 template<class T>
-typename SCCQuotientGraph<T>::SCCI *
-SCCQuotientGraph<T>::operator[](T *bb) {
-     return blockMap[bb];
+SCCI *
+SCCQuotientGraph<T>::operator[] (T *t) {
+     return blockMap[t];
+}
+
+template<class T>
+T *
+SCCQuotientGraph<T>::operator[] (int index) {
+     return objects[index];
+}
+
+template<class T>
+T *
+SCCQuotientGraph<T>::operator[] (SCCI *scc) {
+     return objects[scc->index];
 }
 
 template<class T>
@@ -21,7 +33,7 @@ void
 SCCQuotientGraph<T>::link (SCCI *x, SCCI *y)
 {
     assert (x != y);
-    ASSERT (!locked[x->index], "SCCs not linked in post-order: "<< x->object << " >< "<< y->object);
+    ASSERT (!locked[x->index], "SCCs not linked in post-order: "<< (*this)[x] << " >< "<< (*this)[y]);
 
     reach.set  (x->index, y->index);
     reach.copy (x->index, y->index);
@@ -46,8 +58,8 @@ SCCQuotientGraph<T>::link (T *x, SCCI *y)
 }
 
 template<class T>
-typename SCCQuotientGraph<T>::SCCI *
-SCCQuotientGraph<T>::createSCC (bool loops)
+SCCI *
+SCCQuotientGraph<T>::createSCC (T *t, bool loops)
 {
     SCCI *scci = new SCCI (objects.size(), loops);
     objects.push_back(t);
@@ -61,11 +73,11 @@ SCCQuotientGraph<T>::createSCC (bool loops)
 }
 
 template<class T>
-typename SCCQuotientGraph<T>::SCCI *
+SCCI *
 SCCQuotientGraph<T>::add (T *t, bool loops)
 {
-    SCCI *scc = createSCC(loops, t);
-    pair<T *, SCCI *> p = make_pair (t, (SCCI *)scc);
+    SCCI *scc = createSCC(t, loops);
+    pair<T *, SCCI *> p = make_pair (t, scc);
 
     bool seen = blockMap.insert( p ).second;
     ASSERT (seen, "Instruction added twice: " << t);
