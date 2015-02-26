@@ -1,3 +1,5 @@
+#ifndef LIPTONBIN_UTIL_BITMATRIX_H_
+#define LIPTONBIN_UTIL_BITMATRIX_H_
 
 #include <functional>
 #include <vector>
@@ -122,6 +124,7 @@ public:
     void print (llvm::raw_ostream &outs);
 };
 
-
-
 }
+
+
+#endif /* LIPTONBIN_UTIL_BITMATRIX_H_ */

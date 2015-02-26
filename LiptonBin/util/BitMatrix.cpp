@@ -1,4 +1,3 @@
-
 #include <bitset>
 #include <assert.h>
 #include <iostream>
@@ -6,7 +5,6 @@
 
 #include "BitMatrix.h"
 #include "Util.h"
-
 
 
 using namespace std;

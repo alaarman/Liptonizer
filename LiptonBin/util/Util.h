@@ -8,6 +8,10 @@
 #ifndef LIPTONBIN_UTIL_UTIL_H_
 #define LIPTONBIN_UTIL_UTIL_H_
 
+#include <iostream>
+#include <string>
+
+using namespace std;
 
 #ifndef NDEBUG
 #   define ASSERT(condition, message) \
@@ -22,5 +26,11 @@
 #   define ASSERT(condition, message) do { } while (false)
 #endif
 
+static inline bool
+ends_with(string const & value, string const & ending)
+{
+    if (ending.size() > value.size()) return false;
+    return equal(ending.rbegin(), ending.rend(), value.rbegin());
+}
 
 #endif /* LIPTONBIN_UTIL_UTIL_H_ */
