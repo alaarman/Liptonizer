@@ -15,52 +15,58 @@
 					<extension id="org.eclipse.cdt.core.GASErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
 					<extension id="org.eclipse.cdt.core.GLDErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
 					<extension id="org.eclipse.cdt.core.GCCErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+					<extension id="org.eclipse.cdt.core.GmakeErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+					<extension id="org.eclipse.cdt.core.CWDLocator" point="org.eclipse.cdt.core.ErrorParser"/>
 				</extensions>
 			</storageModule>
 			<storageModule moduleId="cdtBuildSystem" version="4.0.0">
 				<configuration artifactExtension="so" artifactName="${ProjName}" buildArtefactType="org.eclipse.cdt.build.core.buildArtefactType.sharedLib" buildProperties="org.eclipse.cdt.build.core.buildArtefactType=org.eclipse.cdt.build.core.buildArtefactType.sharedLib,org.eclipse.cdt.build.core.buildType=org.eclipse.cdt.build.core.buildType.debug" cleanCommand="rm -rf" description="" id="cdt.managedbuild.config.llvm.clang.macosx.so.debug.1978700588" name="Debug" parent="cdt.managedbuild.config.llvm.clang.macosx.so.debug">
 					<folderInfo id="cdt.managedbuild.config.llvm.clang.macosx.so.debug.1978700588." name="/" resourcePath="">
-						<toolChain id="cdt.managedbuild.toolchain.llvm.clang.macosx.so.debug.1192444013" name="LLVM with Clang (MacOSX)" superClass="cdt.managedbuild.toolchain.llvm.clang.macosx.so.debug">
-							<targetPlatform id="cdt.managedbuild.target.llvm.clang.macosx.platform.so.debug.317964946" name="Debug Platform" superClass="cdt.managedbuild.target.llvm.clang.macosx.platform.so.debug"/>
-							<builder buildPath="${workspace_loc:/LLVMpass}/Debug" id="cdt.managedbuild.target.llvm.clang.macosx.builder.so.debug.2100028830" keepEnvironmentInBuildfile="false" managedBuildOn="true" name="CDT Internal Builder" superClass="cdt.managedbuild.target.llvm.clang.macosx.builder.so.debug"/>
-							<tool id="cdt.managedbuild.tool.llvm.clang.macosx.assembler.so.debug.790132353" name="LLVM assembler" superClass="cdt.managedbuild.tool.llvm.clang.macosx.assembler.so.debug"/>
-							<tool id="cdt.managedbuild.tool.llvm.archiver.base.55739426" name="LLVM archiver" superClass="cdt.managedbuild.tool.llvm.archiver.base"/>
-							<tool id="cdt.managedbuild.tool.llvm.clang.macosx.c.compiler.so.debug.906480345" name="LLVM Clang" superClass="cdt.managedbuild.tool.llvm.clang.macosx.c.compiler.so.debug">
-								<option id="llvm.c_cpp.compiler.option.optimization.level.1276496005" name="Optimization Level" superClass="llvm.c_cpp.compiler.option.optimization.level" value="llvm.c_cpp.compiler.optimization.level.none" valueType="enumerated"/>
-								<option id="llvm.c_cpp.compiler.option.debugging.level.1452288420" name="Debug Level" superClass="llvm.c_cpp.compiler.option.debugging.level" value="llvm.c_cpp.compiler.debugging.level.max" valueType="enumerated"/>
-								<option id="llvm.c_cpp.compiler.option.include.paths.1519091875" name="Include paths (-I)" superClass="llvm.c_cpp.compiler.option.include.paths" valueType="includePath">
-									<listOptionValue builtIn="false" value="/opt/local/libexec/llvm-3.5/include/"/>
-								</option>
-								<inputType id="cdt.managedbuild.tool.llvm.c.compiler.input.1990434128" superClass="cdt.managedbuild.tool.llvm.c.compiler.input"/>
+						<toolChain id="cdt.managedbuild.toolchain.gnu.macosx.base.754638030" name="MacOSX GCC" nonInternalBuilderId="cdt.managedbuild.target.gnu.builder.macosx.base" superClass="cdt.managedbuild.toolchain.gnu.macosx.base">
+							<targetPlatform archList="all" binaryParser="org.eclipse.cdt.core.MachO64" id="cdt.managedbuild.target.gnu.platform.macosx.base.1787632875" name="Debug Platform" osList="macosx" superClass="cdt.managedbuild.target.gnu.platform.macosx.base"/>
+							<builder buildPath="${workspace_loc:/LLVMPass}" id="cdt.managedbuild.target.gnu.builder.macosx.base.355405454" keepEnvironmentInBuildfile="false" managedBuildOn="false" name="Gnu Make Builder" superClass="cdt.managedbuild.target.gnu.builder.macosx.base"/>
+							<tool id="cdt.managedbuild.tool.macosx.c.linker.macosx.base.1754625174" name="MacOS X C Linker" superClass="cdt.managedbuild.tool.macosx.c.linker.macosx.base">
+								<option defaultValue="true" id="macosx.c.link.option.nostart.1901422643" name="Do not use standard start files (-nostartfiles)" superClass="macosx.c.link.option.nostart" valueType="boolean"/>
+								<option defaultValue="true" id="macosx.c.link.option.nodeflibs.62104026" name="Do not use default libraries (-nodefaultlibs)" superClass="macosx.c.link.option.nodeflibs" valueType="boolean"/>
+								<option defaultValue="true" id="macosx.c.link.option.shared.1514065552" name="Shared (-dynamiclib)" superClass="macosx.c.link.option.shared" valueType="boolean"/>
 							</tool>
-							<tool id="cdt.managedbuild.tool.llvm.clang.macosx.cpp.compiler.so.debug.957958456" name="LLVM Clang++" superClass="cdt.managedbuild.tool.llvm.clang.macosx.cpp.compiler.so.debug">
-								<option id="llvm.c_cpp.compiler.option.optimization.level.1277005645" name="Optimization Level" superClass="llvm.c_cpp.compiler.option.optimization.level" value="llvm.c_cpp.compiler.optimization.level.none" valueType="enumerated"/>
-								<option id="llvm.c_cpp.compiler.option.debugging.level.287640295" name="Debug Level" superClass="llvm.c_cpp.compiler.option.debugging.level" value="llvm.c_cpp.compiler.debugging.level.max" valueType="enumerated"/>
-								<option id="llvm.c_cpp.compiler.option.include.paths.1571636484" name="Include paths (-I)" superClass="llvm.c_cpp.compiler.option.include.paths" valueType="includePath">
-									<listOptionValue builtIn="false" value="/opt/local/libexec/llvm-3.5/include/"/>
-								</option>
-								<inputType id="cdt.managedbuild.tool.llvm.cpp.compiler.input.158202779" superClass="cdt.managedbuild.tool.llvm.cpp.compiler.input"/>
-							</tool>
-							<tool id="cdt.managedbuild.tool.llvm.clang.macosx.c.linker.so.debug.323338226" name="LLVM Clang C linker" superClass="cdt.managedbuild.tool.llvm.clang.macosx.c.linker.so.debug">
-								<option defaultValue="true" id="llvm.c.link.option.linkaslibrary.1754573209" name="Create a library" superClass="llvm.c.link.option.linkaslibrary" valueType="boolean"/>
-							</tool>
-							<tool id="cdt.managedbuild.tool.llvm.clang.macosx.cpp.linker.so.debug.1527778320" name="LLVM Clang C++ linker" superClass="cdt.managedbuild.tool.llvm.clang.macosx.cpp.linker.so.debug">
-								<option defaultValue="true" id="llvm.c.link.option.linkaslibrary.843220997" name="Create a library" superClass="llvm.c.link.option.linkaslibrary" valueType="boolean"/>
-								<inputType id="cdt.managedbuild.tool.llvm.c.linker.input.552780887" superClass="cdt.managedbuild.tool.llvm.c.linker.input">
+							<tool id="cdt.managedbuild.tool.macosx.cpp.linker.macosx.base.1226774402" name="MacOS X C++ Linker" superClass="cdt.managedbuild.tool.macosx.cpp.linker.macosx.base">
+								<option defaultValue="true" id="macosx.cpp.link.option.shared.642549528" name="Shared (-dynamiclib)" superClass="macosx.cpp.link.option.shared" valueType="boolean"/>
+								<inputType id="cdt.managedbuild.tool.macosx.cpp.linker.input.1455867798" superClass="cdt.managedbuild.tool.macosx.cpp.linker.input">
 									<additionalInput kind="additionalinputdependency" paths="$(USER_OBJS)"/>
 									<additionalInput kind="additionalinput" paths="$(LIBS)"/>
 								</inputType>
 							</tool>
-						</toolChain>
-					</folderInfo>
-					<folderInfo id="cdt.managedbuild.config.llvm.clang.macosx.so.debug.1978700588.284826126" name="/" resourcePath="Lipton">
-						<toolChain id="cdt.managedbuild.toolchain.llvm.clang.macosx.so.debug.656980241" name="LLVM with Clang (MacOSX)" superClass="cdt.managedbuild.toolchain.llvm.clang.macosx.so.debug" unusedChildren="">
-							<tool id="cdt.managedbuild.tool.llvm.clang.macosx.assembler.so.debug.1892659312" name="LLVM assembler" superClass="cdt.managedbuild.tool.llvm.clang.macosx.assembler.so.debug.790132353"/>
-							<tool id="cdt.managedbuild.tool.llvm.archiver.base.149486536" name="LLVM archiver" superClass="cdt.managedbuild.tool.llvm.archiver.base.55739426"/>
-							<tool id="cdt.managedbuild.tool.llvm.clang.macosx.c.compiler.so.debug.1453762413" name="LLVM Clang" superClass="cdt.managedbuild.tool.llvm.clang.macosx.c.compiler.so.debug.906480345"/>
-							<tool id="cdt.managedbuild.tool.llvm.clang.macosx.cpp.compiler.so.debug.390652486" name="LLVM Clang++" superClass="cdt.managedbuild.tool.llvm.clang.macosx.cpp.compiler.so.debug.957958456"/>
-							<tool id="cdt.managedbuild.tool.llvm.clang.macosx.c.linker.so.debug.1498466382" name="LLVM Clang C linker" superClass="cdt.managedbuild.tool.llvm.clang.macosx.c.linker.so.debug.323338226"/>
-							<tool id="cdt.managedbuild.tool.llvm.clang.macosx.cpp.linker.so.debug.1452647481" name="LLVM Clang C++ linker" superClass="cdt.managedbuild.tool.llvm.clang.macosx.cpp.linker.so.debug.1527778320"/>
+							<tool id="cdt.managedbuild.tool.gnu.assembler.macosx.base.1476949369" name="GCC Assembler" superClass="cdt.managedbuild.tool.gnu.assembler.macosx.base">
+								<option id="gnu.both.asm.option.include.paths.1380692544" name="Include paths (-I)" superClass="gnu.both.asm.option.include.paths" valueType="includePath">
+									<listOptionValue builtIn="false" value="../."/>
+								</option>
+								<inputType id="cdt.managedbuild.tool.gnu.assembler.input.2090119749" superClass="cdt.managedbuild.tool.gnu.assembler.input"/>
+							</tool>
+							<tool id="cdt.managedbuild.tool.gnu.archiver.macosx.base.416737894" name="GCC Archiver" superClass="cdt.managedbuild.tool.gnu.archiver.macosx.base"/>
+							<tool id="cdt.managedbuild.tool.gnu.cpp.compiler.macosx.base.959959917" name="GCC C++ Compiler" superClass="cdt.managedbuild.tool.gnu.cpp.compiler.macosx.base">
+								<option id="gnu.cpp.compiler.option.include.paths.425441018" name="Include paths (-I)" superClass="gnu.cpp.compiler.option.include.paths" valueType="includePath">
+									<listOptionValue builtIn="false" value="/opt/install/include"/>
+									<listOptionValue builtIn="false" value="/opt/local//libexec/llvm-3.5/include"/>
+									<listOptionValue builtIn="false" value="../."/>
+								</option>
+								<option id="gnu.cpp.compiler.option.preprocessor.def.1103853482" name="Defined symbols (-D)" superClass="gnu.cpp.compiler.option.preprocessor.def" valueType="definedSymbols">
+									<listOptionValue builtIn="false" value="__GXX_EXPERIMENTAL_CXX0X__"/>
+								</option>
+								<option id="gnu.cpp.compiler.option.optimization.level.426844979" name="Optimization Level" superClass="gnu.cpp.compiler.option.optimization.level" value="gnu.cpp.compiler.optimization.level.none" valueType="enumerated"/>
+								<option id="gnu.cpp.compiler.option.debugging.level.432066810" name="Debug Level" superClass="gnu.cpp.compiler.option.debugging.level" value="gnu.cpp.compiler.debugging.level.max" valueType="enumerated"/>
+								<option id="gnu.cpp.compiler.option.other.other.2023151429" name="Other flags" superClass="gnu.cpp.compiler.option.other.other" value="-c -fmessage-length=0 -std=c++0x" valueType="string"/>
+								<inputType id="cdt.managedbuild.tool.gnu.cpp.compiler.input.1900853587" superClass="cdt.managedbuild.tool.gnu.cpp.compiler.input"/>
+							</tool>
+							<tool id="cdt.managedbuild.tool.gnu.c.compiler.macosx.base.1500479772" name="GCC C Compiler" superClass="cdt.managedbuild.tool.gnu.c.compiler.macosx.base">
+								<option id="gnu.c.compiler.option.include.paths.158751142" name="Include paths (-I)" superClass="gnu.c.compiler.option.include.paths" valueType="includePath">
+									<listOptionValue builtIn="false" value="/opt/local/libexec/llvm-3.5/include/"/>
+									<listOptionValue builtIn="false" value="../."/>
+								</option>
+								<option defaultValue="gnu.c.optimization.level.none" id="gnu.c.compiler.option.optimization.level.325610793" name="Optimization Level" superClass="gnu.c.compiler.option.optimization.level" valueType="enumerated"/>
+								<option id="gnu.c.compiler.option.debugging.level.1384080254" name="Debug Level" superClass="gnu.c.compiler.option.debugging.level" value="gnu.c.debugging.level.max" valueType="enumerated"/>
+								<inputType id="cdt.managedbuild.tool.gnu.c.compiler.input.225800600" superClass="cdt.managedbuild.tool.gnu.c.compiler.input"/>
+							</tool>
 						</toolChain>
 					</folderInfo>
 				</configuration>
@@ -96,6 +102,7 @@
 								<option id="llvm.c_cpp.compiler.option.debugging.level.1027840137" name="Debug Level" superClass="llvm.c_cpp.compiler.option.debugging.level" value="llvm.c_cpp.compiler.debugging.level.none" valueType="enumerated"/>
 								<option id="llvm.c_cpp.compiler.option.include.paths.702667809" name="Include paths (-I)" superClass="llvm.c_cpp.compiler.option.include.paths" valueType="includePath">
 									<listOptionValue builtIn="false" value="/opt/local/libexec/llvm-3.5/include/"/>
+									<listOptionValue builtIn="false" value="../."/>
 								</option>
 								<inputType id="cdt.managedbuild.tool.llvm.c.compiler.input.359232816" superClass="cdt.managedbuild.tool.llvm.c.compiler.input"/>
 							</tool>
@@ -104,6 +111,8 @@
 								<option id="llvm.c_cpp.compiler.option.debugging.level.2122897645" name="Debug Level" superClass="llvm.c_cpp.compiler.option.debugging.level" value="llvm.c_cpp.compiler.debugging.level.none" valueType="enumerated"/>
 								<option id="llvm.c_cpp.compiler.option.include.paths.1162985081" name="Include paths (-I)" superClass="llvm.c_cpp.compiler.option.include.paths" valueType="includePath">
 									<listOptionValue builtIn="false" value="/opt/local/libexec/llvm-3.5/include/"/>
+									<listOptionValue builtIn="false" value="/opt/install/include"/>
+									<listOptionValue builtIn="false" value="../."/>
 								</option>
 								<inputType id="cdt.managedbuild.tool.llvm.cpp.compiler.input.636948100" superClass="cdt.managedbuild.tool.llvm.cpp.compiler.input"/>
 							</tool>
@@ -112,6 +121,10 @@
 							</tool>
 							<tool id="cdt.managedbuild.tool.llvm.clang.macosx.cpp.linker.so.release.2115584625" name="LLVM Clang C++ linker" superClass="cdt.managedbuild.tool.llvm.clang.macosx.cpp.linker.so.release">
 								<option defaultValue="true" id="llvm.c.link.option.linkaslibrary.1909595811" name="Create a library" superClass="llvm.c.link.option.linkaslibrary" valueType="boolean"/>
+								<option id="llvm.c.link.option.libs.2112571933" name="Libraries (-l)" superClass="llvm.c.link.option.libs"/>
+								<option id="llvm.c.link.option.paths.1931682530" name="Library search path (-L)" superClass="llvm.c.link.option.paths" valueType="libPaths">
+									<listOptionValue builtIn="false" value="/opt/install/lib"/>
+								</option>
 								<inputType id="cdt.managedbuild.tool.llvm.c.linker.input.1181781857" superClass="cdt.managedbuild.tool.llvm.c.linker.input">
 									<additionalInput kind="additionalinputdependency" paths="$(USER_OBJS)"/>
 									<additionalInput kind="additionalinput" paths="$(LIBS)"/>
@@ -127,9 +140,6 @@
 	<storageModule moduleId="cdtBuildSystem" version="4.0.0">
 		<project id="LLVMpass.cdt.managedbuild.target.llvm.clang.macosx.so.1546673895" name="Shared Library" projectType="cdt.managedbuild.target.llvm.clang.macosx.so"/>
 	</storageModule>
-	<storageModule moduleId="scannerConfiguration">
-		<autodiscovery enabled="true" problemReportingEnabled="true" selectedProfileId=""/>
-	</storageModule>
 	<storageModule moduleId="org.eclipse.cdt.core.LanguageSettingsProviders"/>
 	<storageModule moduleId="refreshScope" versionNumber="2">
 		<configuration configurationName="Debug">
@@ -138,5 +148,14 @@
 		<configuration configurationName="Release">
 			<resource resourceType="PROJECT" workspacePath="/LLVMpass"/>
 		</configuration>
+	</storageModule>
+	<storageModule moduleId="scannerConfiguration">
+		<autodiscovery enabled="true" problemReportingEnabled="true" selectedProfileId=""/>
+		<scannerConfigBuildInfo instanceId="cdt.managedbuild.config.llvm.clang.macosx.so.debug.1978700588;cdt.managedbuild.config.llvm.clang.macosx.so.debug.1978700588.;cdt.managedbuild.tool.gnu.cpp.compiler.macosx.base.959959917;cdt.managedbuild.tool.gnu.cpp.compiler.input.1900853587">
+			<autodiscovery enabled="true" problemReportingEnabled="true" selectedProfileId=""/>
+		</scannerConfigBuildInfo>
+		<scannerConfigBuildInfo instanceId="cdt.managedbuild.config.llvm.clang.macosx.so.debug.1978700588;cdt.managedbuild.config.llvm.clang.macosx.so.debug.1978700588.;cdt.managedbuild.tool.gnu.c.compiler.macosx.base.1500479772;cdt.managedbuild.tool.gnu.c.compiler.input.225800600">
+			<autodiscovery enabled="true" problemReportingEnabled="true" selectedProfileId=""/>
+		</scannerConfigBuildInfo>
 	</storageModule>
 </cproject>
