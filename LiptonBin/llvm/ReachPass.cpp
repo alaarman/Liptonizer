@@ -36,9 +36,9 @@ char ReachPass::ID = 0;
 static RegisterPass<ReachPass> X("reach", "Walk CFG");
 
 void
-ReachPass::addInstruction (SCCI *scc, Instruction *I)
+ReachPass::addInstruction (SCCX<BasicBlock> *scc, Instruction *I)
 {
-    pair<Instruction *, SCCI *> makePair = make_pair (I, scc);
+    pair<Instruction *, SCCX<BasicBlock> *> makePair = make_pair (I, scc);
     if (!instructionMap.insert (makePair).second) {
         outs () << "Instruction added twice: " << I;
         exit (1);
@@ -69,7 +69,7 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
         for (BasicBlock *bb : *blocks) {
             // All instructions in an SCC block have equivalent reachability
             // properties (Observation 2 in Purdom's Transitive Closure paper).
-            SCCI *nSCC = blockQuotient.addBlock(bb, bb->size() > 1 || blocks.hasLoop());
+            SCCX<BasicBlock> *nSCC = blockQuotient.addBlock(bb, bb->size() > 1 || blocks.hasLoop());
 
             for (Instruction &I : *bb) {
                 addInstruction(nSCC, &I);
@@ -92,8 +92,8 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
         assert (call_inst != nullptr);
         BasicBlock *caller_block = call_inst->getParent();
 
-        SCCI *callee_scc = blockQuotient[&callee_block];
-        SCCI *caller_scc = blockQuotient[caller_block];
+        SCCX<BasicBlock> *callee_scc = blockQuotient[&callee_block];
+        SCCX<BasicBlock> *caller_scc = blockQuotient[caller_block];
         blockQuotient.addLink (caller_scc, callee_scc);
     }
 
@@ -103,10 +103,10 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
         // All SCCs below have been processed before and have unchanging reachability
         // properties (Observation 1 in Purdom's Transitive Closure paper).
         for (BasicBlock *bb : *blocks) {
-            SCCI *bb_scc = blockQuotient[bb];
+            SCCX<BasicBlock> *bb_scc = blockQuotient[bb];
             for (int i = 0, num = bb->getTerminator()->getNumSuccessors(); i < num; ++i) {
                 BasicBlock *succ = bb->getTerminator()->getSuccessor(i);
-                SCCI *succ_scc = blockQuotient[succ];
+                SCCX<BasicBlock> *succ_scc = blockQuotient[succ];
                 if (succ == bb) {
                     assert (bb_scc->loops);
                     continue;

@@ -23,9 +23,9 @@ namespace VVT {
 class ReachPass : public CallGraphSCCPass {
 
 public:
-    DenseMap<Instruction *, SCCI *> instructionMap;
+    DenseMap<Instruction *, SCCX<BasicBlock> *> instructionMap;
 
-    SCCQuotientGraph blockQuotient;
+    SCCQuotientGraph<BasicBlock> blockQuotient;
 
     ReachPass() : CallGraphSCCPass(ID) { }
 
@@ -47,7 +47,7 @@ private:
     }
 
     void printNode (CallGraphNode* const node, CallGraphSCC& SCC);
-    void addInstruction (SCCI *scc, Instruction *I);
+    void addInstruction (SCCX<BasicBlock> *scc, Instruction *I);
 };
 
 
