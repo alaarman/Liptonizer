@@ -59,24 +59,24 @@ SCCQuotientGraph<T>::link (T *x, SCCI *y)
 
 template<class T>
 SCCI *
-SCCQuotientGraph<T>::createSCC (T *t, bool loops)
+SCCQuotientGraph<T>::createSCC (T *t, bool nontrivial)
 {
-    SCCI *scci = new SCCI (objects.size(), loops);
+    SCCI *scci = new SCCI (objects.size(), nontrivial);
     objects.push_back(t);
     size_t next = objects.size();
 //errs () <<  indicesIndex << " << " << scci->index << "\n";
     reach.ensure(next, next);
     locked.ensure(next);
-    if (loops)
+    if (nontrivial)
         reach.set (scci->index, scci->index); // reflexive reachability properties
     return scci;
 }
 
 template<class T>
 SCCI *
-SCCQuotientGraph<T>::add (T *t, bool loops)
+SCCQuotientGraph<T>::add (T *t, bool nontrivial)
 {
-    SCCI *scc = createSCC(t, loops);
+    SCCI *scc = createSCC(t, nontrivial);
     pair<T *, SCCI *> p = make_pair (t, scc);
 
     bool seen = blockMap.insert( p ).second;

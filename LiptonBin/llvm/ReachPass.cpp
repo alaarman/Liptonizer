@@ -64,15 +64,15 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
 
 
     // SCC iterator (on block level) within function F
-    for (scc_iterator<Function*> blocks = scc_begin(F); !blocks.isAtEnd(); ++blocks) {
+    for (scc_iterator<Function*> bSCC = scc_begin(F); !bSCC.isAtEnd(); ++bSCC) {
 
-        for (BasicBlock *bb : *blocks) {
+        for (BasicBlock *bb : *bSCC) {
             // All instructions in an SCC block have equivalent reachability
             // properties (Observation 2 in Purdom's Transitive Closure paper).
-            SCCI *nSCC = blockQuotient.add(bb, bb->size() > 1 || blocks.hasLoop());
+            SCCI *bq = blockQuotient.add(bb, bSCC.hasLoop());
 
             for (Instruction &I : *bb) {
-                addInstruction(nSCC, &I);
+                addInstruction(bq, &I);
             }
         }
     }
@@ -100,17 +100,17 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
     }
 
     // SCC iterator (on block level) within function F
-    for (scc_iterator<Function*> blocks = scc_begin(F); !blocks.isAtEnd(); ++blocks) {
+    for (scc_iterator<Function*> bSCC = scc_begin(F); !bSCC.isAtEnd(); ++bSCC) {
 
         // All SCCs below have been processed before and have unchanging reachability
         // properties (Observation 1 in Purdom's Transitive Closure paper).
-        for (BasicBlock *bb : *blocks) {
+        for (BasicBlock *bb : *bSCC) {
             SCCI *bb_scc = blockQuotient[bb];
             for (int i = 0, num = bb->getTerminator()->getNumSuccessors(); i < num; ++i) {
                 BasicBlock *succ = bb->getTerminator()->getSuccessor(i);
                 SCCI *succ_scc = blockQuotient[succ];
                 if (succ == bb) {
-                    assert (bb_scc->loops);
+                    assert (bb_scc->nontrivial);
                     continue;
                 }
 
@@ -166,10 +166,11 @@ ReachPass::printNode (CallGraphNode* const node, CallGraphSCC& SCC)
         errs() << "\nSCC #" << ++sccNum << " : ";
 
         for (BasicBlock *bb : nextSCC) {
-            errs() << bb->getName() << "("<< blockQuotient[bb]->index <<"), ";
-            for (Instruction &I : *bb) {
-                errs() << I.getName() << ", ";
-            }
+            VVT::SCCI* scci = blockQuotient[bb];
+            errs () << bb->getName () << "(" << scci->index << (scci->nontrivial?"+":"") <<"), ";
+//            for (Instruction &I : *bb) {
+//                errs() << I.getName() << ", ";
+//            }
         }
 
         if (nextSCC.size() == 1 && SCCI.hasLoop()) {

@@ -24,11 +24,10 @@ namespace VVT {
 struct SCCI {
     SCCI(int i, bool l) :
         index(i),
-        loops(l)
+        nontrivial(l)
     { };
-
     int             index;
-    bool            loops;
+    bool            nontrivial;
 };
 
 template<typename T>
@@ -40,7 +39,7 @@ private:
     BitMatrix reach;
     BitVector locked;
 
-    SCCI *createSCC (T *t, bool loops);
+    SCCI *createSCC (T *t, bool nontrivial);
 
 public:
     SCCQuotientGraph() :
@@ -54,7 +53,7 @@ public:
     void link (SCCI *x, SCCI *y);
     void link (T *x, T *y);
     void link (T *x, SCCI *y);
-    SCCI *add (T *t, bool loops);
+    SCCI *add (T *t, bool nontrivial);
     void print();
 };
 
