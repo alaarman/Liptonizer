@@ -59,6 +59,8 @@ main( int argc, const char* argv[] )
     pm.add (reach);
     pm.run (*m);
 
+    std::pair<Instruction *, Function *> p = make_pair ((Instruction *)NULL, main);
+    reach->entryPoints.push_back (p);
     reach->printClosure();
     //CallGraph &cfg = cfgpass->getCallGraph();
 

@@ -16,6 +16,7 @@
 #include <llvm/Analysis/CFG.h>
 
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/IR/ValueMap.h>
 
 #include "ReachPass.h"
 
@@ -37,10 +38,20 @@ namespace VVT {
 char ReachPass::ID = 0;
 static RegisterPass<ReachPass> X("reach", "Walk CFG");
 
-void
-ReachPass::addInstruction (SCCI *scc, Instruction *I)
+ReachPass::ReachPass() : CallGraphSCCPass(ID)
 {
-    pair<Instruction *, SCCI *> makePair = make_pair (I, scc);
+    //CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
+    //Module &m = CG.getModule();
+    //Function *main = m.getFunction("main");
+    //ASSERT (main, "No main funciton in module");
+}
+
+
+
+void
+ReachPass::addInstruction (SCCI<BasicBlock> *scc, Instruction *I)
+{
+    pair<Instruction *, SCCI<BasicBlock> *> makePair = make_pair (I, scc);
     bool seen = instructionMap.insert (makePair).second;
     ASSERT (seen, "Instruction added twice: " << I);
 }
@@ -48,9 +59,6 @@ ReachPass::addInstruction (SCCI *scc, Instruction *I)
 bool
 ReachPass::runOnSCC(CallGraphSCC &SCC)
 {
-    //CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-    //Module & m = CG.getModule();
-
     if (SCC.size() == 0) return true;
 
     // SCC iterator (on function level)
@@ -62,14 +70,15 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
     Function *F = node->getFunction ();
     if (!F || F->getBasicBlockList().empty()) return true;
 
-
     // SCC iterator (on block level) within function F
     for (scc_iterator<Function*> bSCC = scc_begin(F); !bSCC.isAtEnd(); ++bSCC) {
+
+        SCCI<BasicBlock> *bq = blockQuotient.createSCC(bSCC.hasLoop());
 
         for (BasicBlock *bb : *bSCC) {
             // All instructions in an SCC block have equivalent reachability
             // properties (Observation 2 in Purdom's Transitive Closure paper).
-            SCCI *bq = blockQuotient.add(bb, bSCC.hasLoop());
+            blockQuotient.add(bq, bb, bSCC.hasLoop());
 
             for (Instruction &I : *bb) {
                 addInstruction(bq, &I);
@@ -83,19 +92,24 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
     // properties (Observation 1 in Purdom's Transitive Closure paper).
     if (node->size() > 0)
     for (CallGraphNode::CallRecord rec : *node) {
-        Function* callee = rec.second->getFunction ();
-        if (callee->size() == 0) continue; //external library function
-        BasicBlock &callee_block = callee->getEntryBlock();
+        Function *callee = rec.second->getFunction ();
 
         WeakVH first = rec.first;
-        llvm::Value &valPtr = *first;
-
+        Value &valPtr = *first;
         Instruction *call_inst = dyn_cast<Instruction> (&valPtr);
         assert (call_inst != nullptr);
+        if (callee->getName() == "pthread_create") {
+            Function *threadF = dyn_cast<Function> (call_inst->getOperand (2));
+            ASSERT (threadF, "Incorrect pthread_create argument?");
+            entryPoints.push_back (make_pair(call_inst, threadF));
+        }
+        if (callee->size() == 0) continue; //external library function
+
+        BasicBlock &callee_block = callee->getEntryBlock();
         BasicBlock *caller_block = call_inst->getParent();
 
-        SCCI *callee_scc = blockQuotient[&callee_block];
-        SCCI *caller_scc = blockQuotient[caller_block];
+        SCCI<BasicBlock> *callee_scc = blockQuotient[&callee_block];
+        SCCI<BasicBlock> *caller_scc = blockQuotient[caller_block];
         blockQuotient.link (caller_scc, callee_scc);
     }
 
@@ -105,10 +119,10 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
         // All SCCs below have been processed before and have unchanging reachability
         // properties (Observation 1 in Purdom's Transitive Closure paper).
         for (BasicBlock *bb : *bSCC) {
-            SCCI *bb_scc = blockQuotient[bb];
+            SCCI<BasicBlock> *bb_scc = blockQuotient[bb];
             for (int i = 0, num = bb->getTerminator()->getNumSuccessors(); i < num; ++i) {
                 BasicBlock *succ = bb->getTerminator()->getSuccessor(i);
-                SCCI *succ_scc = blockQuotient[succ];
+                SCCI<BasicBlock> *succ_scc = blockQuotient[succ];
                 if (succ == bb) {
                     assert (bb_scc->nontrivial);
                     continue;
@@ -125,6 +139,10 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
 void
 ReachPass::printClosure() {
     blockQuotient.print ();
+}
+
+void
+ReachPass::finalize() {
 }
 
 void
@@ -161,19 +179,19 @@ ReachPass::printNode (CallGraphNode* const node, CallGraphSCC& SCC)
 
     if (!F || F->getBasicBlockList().empty()) return;
     errs() << "SCCs for Function " <<  get_name (F) << " in PostOrder:";
-    for (scc_iterator<Function *> SCCI = scc_begin(F); !SCCI.isAtEnd(); ++SCCI) {
-        const std::vector<BasicBlock *> &nextSCC = *SCCI;
+    for (scc_iterator<Function *> cg_scc = scc_begin(F); !cg_scc.isAtEnd(); ++cg_scc) {
+        const std::vector<BasicBlock *> &nextSCC = *cg_scc;
         errs() << "\nSCC #" << ++sccNum << " : ";
 
         for (BasicBlock *bb : nextSCC) {
-            VVT::SCCI* scci = blockQuotient[bb];
+            SCCI<BasicBlock> *scci = blockQuotient[bb];
             errs () << bb->getName () << "(" << scci->index << (scci->nontrivial?"+":"") <<"), ";
 //            for (Instruction &I : *bb) {
 //                errs() << I.getName() << ", ";
 //            }
         }
 
-        if (nextSCC.size() == 1 && SCCI.hasLoop()) {
+        if (nextSCC.size() == 1 && cg_scc.hasLoop()) {
             errs() << " (Has self-loop).";
         }
     }

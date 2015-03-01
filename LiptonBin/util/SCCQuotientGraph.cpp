@@ -11,29 +11,20 @@ using namespace std;
 namespace VVT {
 
 template<class T>
-SCCI *
+SCCI<T> *
 SCCQuotientGraph<T>::operator[] (T *t) {
      return blockMap[t];
 }
 
 template<class T>
-T *
-SCCQuotientGraph<T>::operator[] (int index) {
-     return objects[index];
-}
-
-template<class T>
-T *
-SCCQuotientGraph<T>::operator[] (SCCI *scc) {
-     return objects[scc->index];
-}
-
-template<class T>
 void
-SCCQuotientGraph<T>::link (SCCI *x, SCCI *y)
+SCCQuotientGraph<T>::link (SCCI<T> *x, SCCI<T> *y)
 {
-    assert (x != y);
-    ASSERT (!locked[x->index], "SCCs not linked in post-order: "<< (*this)[x] << " >< "<< (*this)[y]);
+    if (x == y) {
+        ASSERT (reach.get(x->index, y->index), "Non trivial SCC not correctly initialized: "<< x->elems[0]);
+        return;
+    }
+    ASSERT (!locked[x->index], "SCCs not linked in post-order: "<< x << " >< "<< y);
 
     reach.set  (x->index, y->index);
     reach.copy (x->index, y->index);
@@ -44,45 +35,50 @@ template<class T>
 void
 SCCQuotientGraph<T>::link (T *x, T *y)
 {
-    SCCI *xscc = blockMap[x];
-    SCCI *yscc = blockMap[y];
+    SCCI<T> *xscc = blockMap[x];
+    SCCI<T> *yscc = blockMap[y];
     link(xscc, yscc);
 }
 
 template<class T>
 void
-SCCQuotientGraph<T>::link (T *x, SCCI *y)
+SCCQuotientGraph<T>::link (T *x, SCCI<T> *y)
 {
-    SCCI *xscc = blockMap[x];
+    SCCI<T> *xscc = blockMap[x];
     link(xscc, y);
 }
 
 template<class T>
-SCCI *
-SCCQuotientGraph<T>::createSCC (T *t, bool nontrivial)
+SCCI<T> *
+SCCQuotientGraph<T>::createSCC (bool nontrivial)
 {
-    SCCI *scci = new SCCI (objects.size(), nontrivial);
-    objects.push_back(t);
-    size_t next = objects.size();
+    SCCI<T> *scci = new SCCI<T> (size++, nontrivial);
 //errs () <<  indicesIndex << " << " << scci->index << "\n";
-    reach.ensure(next, next);
-    locked.ensure(next);
+    reach.ensure(size, size);
+    locked.ensure(size);
     if (nontrivial)
         reach.set (scci->index, scci->index); // reflexive reachability properties
     return scci;
 }
 
 template<class T>
-SCCI *
-SCCQuotientGraph<T>::add (T *t, bool nontrivial)
+void
+SCCQuotientGraph<T>::add (SCCI<T> *scc, T *t, bool nontrivial)
 {
-    SCCI *scc = createSCC(t, nontrivial);
-    pair<T *, SCCI *> p = make_pair (t, scc);
+    scc->elems.push_back (t);
 
+    pair<T *, SCCI<T> *> p = make_pair (t, scc);
     bool seen = blockMap.insert( p ).second;
     ASSERT (seen, "Instruction added twice: " << t);
+}
 
-    return scc;
+template<class T>
+SCCI<T> *
+SCCQuotientGraph<T>::add (T *t, bool nontrivial)
+{
+    SCCI<T> *scc = createSCC (nontrivial);
+
+    add (scc, t, nontrivial);
 }
 
 template<class T>

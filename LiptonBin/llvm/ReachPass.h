@@ -12,8 +12,10 @@
 
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Function.h>
 #include <llvm/IR/Instruction.h>
 
+#include <vector>
 
 namespace VVT {
 
@@ -21,12 +23,15 @@ class ReachPass : public CallGraphSCCPass {
 
 public:
     static char ID;
-    DenseMap<Instruction *, SCCI *> instructionMap;
+    DenseMap<Instruction *, SCCI<BasicBlock> *> instructionMap;
     SCCQuotientGraph<BasicBlock> blockQuotient;
 
-    ReachPass() : CallGraphSCCPass(ID) { }
+    vector<pair<Instruction *, Function *>> entryPoints;
+
+    ReachPass();
 
     void printClosure();
+    void finalize();
 
 private:
     int sccNum = 0;
@@ -37,7 +42,7 @@ private:
 
     void checkNode (CallGraphNode* const node, CallGraphSCC& SCC);
     void printNode (CallGraphNode* const node, CallGraphSCC& SCC);
-    void addInstruction (SCCI *scc, Instruction *I);
+    void addInstruction (SCCI<BasicBlock> *scc, Instruction *I);
 };
 
 
