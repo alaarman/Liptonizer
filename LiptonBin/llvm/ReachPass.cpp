@@ -48,7 +48,11 @@ ReachPass::ReachPass() : CallGraphSCCPass(ID)
     //ASSERT (main, "No main funciton in module");
 }
 
-
+void
+ReachPass::getAnalysisUsage(AnalysisUsage &AU) const {
+    AU.setPreservesAll();
+    AU.addRequired<CallGraphWrapperPass>();
+}
 
 void
 ReachPass::addInstruction (unsigned index, Instruction *I)
@@ -261,13 +265,6 @@ ReachPass::printClosure() {
 
 void
 ReachPass::finalize() {
-}
-
-void
-ReachPass::getAnalysisUsage(AnalysisUsage &AU) const {
-    AU.setPreservesAll();
-    AU.addRequired<AliasAnalysis>();
-    AU.addRequired<CallGraphWrapperPass>();
 }
 
 void
