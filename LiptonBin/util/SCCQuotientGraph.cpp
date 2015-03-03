@@ -63,7 +63,7 @@ SCCQuotientGraph<T>::createSCC (bool nontrivial)
 
 template<class T>
 void
-SCCQuotientGraph<T>::add (SCCI<T> *scc, T *t, bool nontrivial)
+SCCQuotientGraph<T>::addSCC (SCCI<T> *scc, T *t)
 {
     scc->elems.push_back (t);
 
@@ -73,19 +73,20 @@ SCCQuotientGraph<T>::add (SCCI<T> *scc, T *t, bool nontrivial)
 }
 
 template<class T>
-SCCI<T> *
-SCCQuotientGraph<T>::add (T *t, bool nontrivial)
+void
+SCCQuotientGraph<T>::add (SCCI<T> *scc, T *t)
 {
-    SCCI<T> *scc = createSCC (nontrivial);
-
-    add (scc, t, nontrivial);
+    addSCC (scc, t);
+//
+//    ASSERT (scc->nontrivial || scc->elems.size() == 1,
+//            "Nontrivial SCCs cannot contain multiple elements.");
 }
 
 template<class T>
 void
 SCCQuotientGraph<T>::print()
 {
-       reach.print(outs());
+    reach.print(outs());
 }
 
 } // namespace VVT

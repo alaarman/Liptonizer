@@ -22,11 +22,16 @@ namespace VVT {
 class ReachPass : public CallGraphSCCPass {
 
 public:
-    static char ID;
-    DenseMap<Instruction *, SCCI<BasicBlock> *> instructionMap;
-    SCCQuotientGraph<BasicBlock> blockQuotient;
+    typedef pair<Instruction *, Function *>         CallT;
+    typedef vector<CallT>                           CallsT;
+    typedef DenseMap<BasicBlock *, CallsT>          CallMapT;
+    typedef pair<BasicBlock *, CallsT>              CallMapET;
 
-    vector<pair<Instruction *, Function *>> entryPoints;
+    static char ID;
+    DenseMap<Instruction *, unsigned>               instructionMap;
+    SCCQuotientGraph<BasicBlock>                    blockQuotient;
+    SCCQuotientGraph<Instruction>                   instrQuotient;
+    vector<CallT>                                   entryPoints;
 
     ReachPass();
 
@@ -35,6 +40,8 @@ public:
 
 private:
     int sccNum = 0;
+    CallMapT calls;
+    void reorder();
 
     // getAnalysisUsage - This pass requires the CallGraph.
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
@@ -42,7 +49,7 @@ private:
 
     void checkNode (CallGraphNode* const node, CallGraphSCC& SCC);
     void printNode (CallGraphNode* const node, CallGraphSCC& SCC);
-    void addInstruction (SCCI<BasicBlock> *scc, Instruction *I);
+    void addInstruction (unsigned scc, Instruction *I);
 };
 
 

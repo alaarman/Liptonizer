@@ -30,6 +30,7 @@ struct SCCI  {
     int             index;
     bool            nontrivial;
     vector<T *>     elems;
+    SCCI<T>        *parent = NULL;
 
 //    union SCCContent {
 //        T           *elem = NULL;
@@ -79,8 +80,9 @@ public:
     SCCI<T>    *operator[] (T *bb);
 
     SCCI<T>    *createSCC (bool nontrivial);
-    void        add (SCCI<T> *scc, T *t, bool nontrivial);
-    SCCI<T>    *add (T *t, bool nontrivial);
+    void        add (SCCI<T> *scc, T *t);       // add (non-SCC) sequences (one by one)
+    void        addSCC (SCCI<T> *scc, T *t);    // add SCC sets (one by one)
+    //SCCI<T>    *add (T *t, bool nontrivial);
     void        link (SCCI<T> *x, SCCI<T> *y);
     void        link (T *x, T *y);
     void        link (T *x, SCCI<T> *y);
