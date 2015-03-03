@@ -17,7 +17,6 @@
 #include <llvm/ADT/DenseMap.h>
 
 
-using namespace llvm;
 
 namespace VVT {
 
@@ -67,7 +66,7 @@ template<typename T>
 class SCCQuotientGraph {
 
 private:
-    DenseMap<T *, SCCI<T> *> blockMap;
+    llvm::DenseMap<T *, SCCI<T> *> blockMap;
     BitMatrix reach;
     BitVector locked;
     unsigned size = 0;

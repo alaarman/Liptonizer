@@ -17,6 +17,8 @@
 
 #include <vector>
 
+using namespace llvm;
+
 namespace VVT {
 
 class ReachPass : public CallGraphSCCPass {

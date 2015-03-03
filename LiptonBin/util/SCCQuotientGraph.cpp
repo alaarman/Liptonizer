@@ -6,6 +6,7 @@
 #include "util/Util.h"
 
 using namespace std;
+using namespace llvm;
 
 
 namespace VVT {
