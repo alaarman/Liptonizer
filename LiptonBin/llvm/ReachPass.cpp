@@ -149,14 +149,10 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
             } else {
                 int i = 0;
                 for (Instruction &I : *bb) {
-                    cout << 5 << endl;
                     instrQuotient.add (iq, &I);
-                    cout << 5 << endl;
                     if (i < instrs.size() && &I == instrs[i].first) {
                         i++;
-                        cout << 6 << endl;
                         SCCI<Instruction> *iq2 = iq;
-                        cout << 5 << endl;
                         iq = instrQuotient.createSCC (bSCC.hasLoop());
                         iq->parent = iq2;
                     }
@@ -166,11 +162,6 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
     }
 
     printNode (node, SCC);
-
-
-    // All SCCs below have been processed before and have unchanging reachability
-    // properties (Observation 1 in Purdom's Transitive Closure paper).
-
 
     // SCC iterator (on block level) within function F
     for (scc_iterator<Function *> bSCC = scc_begin(F); !bSCC.isAtEnd(); ++bSCC) {
