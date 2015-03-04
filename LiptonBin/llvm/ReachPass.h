@@ -21,6 +21,7 @@ using namespace llvm;
 
 namespace VVT {
 
+
 class ReachPass : public CallGraphSCCPass {
 
 public:
@@ -33,7 +34,9 @@ public:
     DenseMap<Instruction *, unsigned>               instructionMap;
     SCCQuotientGraph<BasicBlock>                    blockQuotient;
     SCCQuotientGraph<Instruction>                   instrQuotient;
-    vector<CallT>                                   entryPoints;
+    DenseMap<Function *, std::vector<Instruction *>>Threads;
+    DenseMap<Instruction *, Function *>             callRecords;
+    CallMapT                                        calls;
 
     ReachPass();
 
@@ -42,7 +45,6 @@ public:
 
 private:
     int sccNum = 0;
-    CallMapT calls;
     void reorder();
 
     // getAnalysisUsage - This pass requires the CallGraph.
@@ -52,6 +54,7 @@ private:
     void checkNode (CallGraphNode* const node, CallGraphSCC& SCC);
     void printNode (CallGraphNode* const node, CallGraphSCC& SCC);
     void addInstruction (unsigned scc, Instruction *I);
+public:
 };
 
 

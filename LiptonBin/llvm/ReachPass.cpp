@@ -1,4 +1,9 @@
 
+#include "ReachPass.h"
+
+#include "util/BitMatrix.h"
+#include "util/Util.h"
+
 #include <algorithm>    // std::sort
 #include <assert.h>
 #include <iostream>
@@ -20,11 +25,6 @@
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/IR/ValueMap.h>
 
-#include "ReachPass.h"
-
-#include "util/BitMatrix.h"
-#include "util/Util.h"
-
 using namespace llvm;
 using namespace std;
 
@@ -42,10 +42,11 @@ static RegisterPass<ReachPass> X("reach", "Walk CFG");
 
 ReachPass::ReachPass() : CallGraphSCCPass(ID)
 {
-    //CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-    //Module &m = CG.getModule();
-    //Function *main = m.getFunction("main");
-    //ASSERT (main, "No main funciton in module");
+    CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
+    Module &m = CG.getModule();
+    Function *main = m.getFunction("main");
+    ASSERT (main, "No main funciton in module");
+    Threads[main].push_back((Instruction *)NULL);
 }
 
 void
@@ -57,8 +58,8 @@ ReachPass::getAnalysisUsage(AnalysisUsage &AU) const {
 void
 ReachPass::addInstruction (unsigned index, Instruction *I)
 {
-    pair<Instruction *, unsigned> makePair = make_pair (I, index);
-    bool seen = instructionMap.insert (makePair).second;
+    pair<Instruction *, unsigned> p = make_pair (I, index);
+    bool seen = instructionMap.insert (p).second;
     ASSERT (seen, "Instruction added twice: " << I);
 }
 
@@ -118,9 +119,12 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
         if (callee->getName() == "pthread_create") {
             Function *threadF = dyn_cast<Function> (callInstr->getOperand (2));
             ASSERT (threadF, "Incorrect pthread_create argument?");
-            entryPoints.push_back (make_pair(callInstr, threadF));
+            //Threads (threadF, callInstr); // add to threads (via functor)
+            Threads[threadF].push_back (callInstr);
         }
         if (callee->size() == 0) continue; // library function
+
+        callRecords.insert(make_pair (callInstr, callee));
 
         BasicBlock *callerBlock = callInstr->getParent ();
         calls[callerBlock].push_back (make_pair (callInstr, callee));
@@ -198,8 +202,7 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
         }
     }
 
-
-    // SCC iterator (on block level) within blocks
+    // SCC iterator (on instruction level) within blocks
     for (scc_iterator<Function *> bSCC = scc_begin(F); !bSCC.isAtEnd(); ++bSCC) {
 
         // All SCCs below have been processed before and have unchanging reachability
@@ -235,20 +238,18 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
         }
     }
 
-
-
     return true;
 }
 
-static void printF (ReachPass::CallT &F) {
-    outs () << F.second->getName() <<", ";
+static void printF (pair<Function *, std::vector<Instruction *>> &F) {
+    outs () << F.first->getName() <<", ";
 }
 
 void
 ReachPass::printClosure() {
     blockQuotient.print ();
 
-    for_each (entryPoints.begin(), entryPoints.end(), printF);
+    for_each (Threads.begin(), Threads.end(), printF);
     outs ()  << "\n";
 
     instrQuotient.print ();

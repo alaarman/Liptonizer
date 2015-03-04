@@ -33,4 +33,10 @@ ends_with(string const & value, string const & ending)
     return equal(ending.rbegin(), ending.rend(), value.rbegin());
 }
 
+template<typename T, typename Y>
+static T *select2nd(pair<Y, T> p) { return p.second; }
+
+template<typename T, typename Y>
+static T *select1st(pair<T, Y> p) { return p.first; }
+
 #endif /* LIPTONBIN_UTIL_UTIL_H_ */
