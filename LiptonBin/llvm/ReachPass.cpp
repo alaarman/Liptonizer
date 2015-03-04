@@ -42,11 +42,6 @@ static RegisterPass<ReachPass> X("reach", "Walk CFG");
 
 ReachPass::ReachPass() : CallGraphSCCPass(ID)
 {
-    CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-    Module &m = CG.getModule();
-    Function *main = m.getFunction("main");
-    ASSERT (main, "No main funciton in module");
-    Threads[main].push_back((Instruction *)NULL);
 }
 
 void
@@ -257,6 +252,11 @@ ReachPass::printClosure() {
 
 void
 ReachPass::finalize() {
+    CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
+    Module &m = CG.getModule();
+    Function *main = m.getFunction("main");
+    ASSERT (main, "No main funciton in module");
+    Threads[main].push_back((Instruction *)NULL);
 }
 
 void

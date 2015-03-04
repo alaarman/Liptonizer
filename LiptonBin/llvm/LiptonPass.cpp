@@ -32,7 +32,8 @@ static RegisterPass<LiptonPass> X("lipton", "Lipton reduction");
 
 LiptonPass::LiptonPass() : ModulePass(ID),
         AA (getAnalysis<AliasAnalysis>()),
-        Reach (getAnalysis<ReachPass>())
+        Reach (getAnalysis<ReachPass>()),
+        Yield (nullptr)
 { }
 
 void
@@ -65,7 +66,7 @@ LiptonPass::walkGraph ( Instruction *I )
             outs() << "Handle library call: "<< call->getCalledFunction()->getName() <<"\n";
         }
     } else {
-        (*process) (this, I);
+        I = (*process) (this, I);
     }
 
     if (I->getNextNode() != nullptr) {
@@ -94,41 +95,59 @@ LiptonPass::walkGraph ( CallGraphNode &N )
     walkGraph (*N.getFunction());
 }
 
-struct Collect : public LiptonPass::Process {
+struct Collect : public LiptonPass::Processor {
+    static StringRef Action;
+
+    using Processor::Processor;
     ~Collect() { }
 
     vector<Instruction *> content;
 
-    void
-    operator()(LiptonPass *pass, Instruction *I)
+    Instruction *
+    operator()(Instruction *I)
     {
+        Pass->TI[ThreadF].push_back (I);
         content.push_back (I);
+        return I;
     }
 };
 
-struct Liptonize : public LiptonPass::Process { // liptonize it, uhmmmhu
-
-    unsigned count : 2;
-
-    ~Liptonize() { }
-    Liptonize() : count(0) {}
+struct Liptonize : public LiptonPass::Processor { // liptonize it, uhmmmhu
 
     enum mover_e {
+        RightMover = 0,
         NoneMover,
         LeftMover,
-        RightMover,
-        BothMover
+        BothMover,
     };
 
-    mover_e
-    movable(LiptonPass *pass, Instruction *I)
+    enum area_e {
+        RightArea = 0,
+        LeftArea,
+    };
+
+    static StringRef    Action;
+    area_e              Area : 1;
+
+    using Processor::Processor;
+    ~Liptonize() { }
+
+    void
+    initialize()
     {
-        llvm::Function* F = I->getParent ()->getParent ();
-        for (pair<Function *, vector<Instruction *>> &X : pass->Reach.Threads) {
-            if (X.first == F && X.second.size() == 1)
+        Area = RightArea;
+    }
+
+    mover_e
+    movable(Instruction *I)
+    {
+        Function* F = I->getParent ()->getParent ();
+        unsigned TCount = Pass->Reach.Threads[F].size ();
+        for (pair<Function *, vector<Instruction *>> &X : Pass->TI) {
+            if (X.first == F && TCount == 1)
                 continue;
             for (Instruction *J : X.second) {
-                switch (pass->AA.alias(J, I)) {
+                switch (Pass->AA.alias(J, I)) {
                 case AliasAnalysis::MayAlias:
                 case AliasAnalysis::PartialAlias:
                 case AliasAnalysis::MustAlias:
@@ -143,48 +162,62 @@ struct Liptonize : public LiptonPass::Process { // liptonize it, uhmmmhu
         return BothMover;
     }
 
-    void
-    operator()(LiptonPass *pass, Instruction *I)
+    // 0 == Right
+    // 1 == None
+    // 2 == Left
+    Instruction *
+    operator()(Instruction *I)
     {
-        mover_e m = movable (pass, I);
+        mover_e m = movable (I);
         switch (m) {
-        case BothMover:
-        case NoneMover:
+        case RightMover:
+            if (Area == LeftArea) {
+                I->insertAfter(CallInst::Create(Pass->Yield));
+                return I->getNextNode();
+            }
+            Area = Area == LeftArea ? LeftArea : RightArea;
             break;
+        case LeftMover:
+            Area = Area == RightArea ? RightArea : LeftArea;
+            break;
+        case NoneMover:
+            Area = LeftArea;
+            break;
+        case BothMover: break;
         default:
             ASSERT (false, "Missing case.");
         }
+        return I;
     }
 };
+
+StringRef Collect::Action = "Collecting";
+StringRef  Liptonize::Action = "Liptonizing";
+
+template <typename ProcessorT>
+void
+LiptonPass::walkGraph ( CallGraph &CG )
+{
+    for (pair<Function *, vector<Instruction *>> &X : Reach.Threads) {
+
+        Function* Thread = X.first;
+        ProcessorT processor(this, Thread, ProcessorT::Action);
+        processor.initialize();
+        process = &processor;
+        walkGraph (*CG[Thread]);
+
+    }
+}
 
 bool
 LiptonPass::runOnModule (Module &M)
 {
     CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-    CallGraphNode *external = CG.getExternalCallingNode();
-    DenseMap<Function *, vector<Instruction *>> *T = &Reach.Threads;
+    Yield = CG.getModule().getFunction("pthread_yield");
 
-    for (CallGraphNode::CallRecord rec : *external) {
-        Function *entry = rec.second->getFunction ();
-        if (entry->size() == 0) continue; // library function
-        if (T->find(entry) == T->end()) continue; // not a thread
+    walkGraph<Collect> ( CG );
+    walkGraph<Liptonize> ( CG );
 
-        outs() << "Collecting "<< entry->getName() <<"\n";
-        process = new Collect();
-        walkGraph ( *CG[entry] );
-        TI.insert (make_pair(entry, &static_cast<Collect *>(process)->content));
-        // leaks, but collect is just a list pointer.
-    }
-
-    process = new Liptonize();
-    for (CallGraphNode::CallRecord rec : *external) {
-        Function *entry = rec.second->getFunction ();
-        if (entry->size() == 0) continue; // library function
-        if (T->find(entry) == T->end()) continue; // not a thread
-
-        outs() << "Liptonizing "<< entry->getName() <<"\n";
-        walkGraph ( *CG[entry] );
-    }
     return true;
 }
 

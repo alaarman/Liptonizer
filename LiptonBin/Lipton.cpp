@@ -1,38 +1,34 @@
 
+#include "llvm/LiptonPass.h"
 #include "llvm/ReachPass.h"
 #include "util/Util.h"
 
 #include <iostream>
 #include <string>
 
-#include <llvm/LinkAllPasses.h>
-
-#include <llvm/Analysis/Passes.h>
-
+//#include <llvm/LinkAllPasses.h>
 #include <llvm/Pass.h>
-#include <llvm/PassRegistry.h>
 #include <llvm/PassSupport.h>
 #include <llvm/PassManager.h>
 #include <llvm/InitializePasses.h>
 #include <llvm/PassRegistry.h>
 #include <llvm/PassAnalysisSupport.h>
 #include <llvm/Analysis/CallGraph.h>
-#include <llvm/PassInfo.h>
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
+#include <llvm/Analysis/Passes.h>
 #include <llvm/Bitcode/ReaderWriter.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/LegacyPassNameParser.h>
 #include <llvm/IR/PassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IRReader/IRReader.h>
 #include <llvm/Support/ErrorOr.h>
 #include <llvm/Support/MemoryBuffer.h>
-
 #include <llvm/Support/SourceMgr.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Transforms/Scalar.h>
 
 using namespace llvm;
 using namespace std;
@@ -87,10 +83,13 @@ main( int argc, const char* argv[] )
     PassManager pm;
     CallGraphWrapperPass *cfgpass = new CallGraphWrapperPass();
     ReachPass *reach = new ReachPass();
+    LiptonPass *lipton = new LiptonPass();
     pm.add (indvars);
     pm.add (lur);
     pm.add (cfgpass);
     pm.add (reach);
+    reach->finalize();
+    pm.add (lipton);
     pm.run (*m);
 
     reach->printClosure();

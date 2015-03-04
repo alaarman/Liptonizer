@@ -29,12 +29,13 @@ public:
     typedef vector<CallT>                           CallsT;
     typedef DenseMap<BasicBlock *, CallsT>          CallMapT;
     typedef pair<BasicBlock *, CallsT>              CallMapET;
+    typedef DenseMap<Function *, std::vector<Instruction *>> ThreadCreateT;
 
     static char ID;
     DenseMap<Instruction *, unsigned>               instructionMap;
     SCCQuotientGraph<BasicBlock>                    blockQuotient;
     SCCQuotientGraph<Instruction>                   instrQuotient;
-    DenseMap<Function *, std::vector<Instruction *>>Threads;
+    ThreadCreateT                                   Threads;
     DenseMap<Instruction *, Function *>             callRecords;
     CallMapT                                        calls;
 

@@ -29,27 +29,40 @@ public:
     static char ID;
     LiptonPass();
 
-    struct Process {
-        virtual ~Process() {}
-        virtual void operator()(LiptonPass *pass, Instruction *I) {}
+    struct Processor {
+        LiptonPass *Pass;
+        Function *ThreadF;
+        Processor(LiptonPass *L, Function *F, StringRef action) :
+                Pass(L),
+                ThreadF(F)
+        {
+            outs() << action <<" "<< F->getName() <<"\n";
+        }
+        virtual ~Processor() {}
+        virtual void initialize() {}
+        virtual Instruction *operator()(LiptonPass *pass, Instruction *I)
+                                       { return nullptr; }
     };
 
-    DenseMap<Function *, std::vector<Instruction *> *> TI;
-
-    AliasAnalysis          &AA;
-    ReachPass              &Reach;
+    ReachPass::ThreadCreateT    TI;
+    AliasAnalysis              &AA;
+    ReachPass                  &Reach;
+    Function                   *Yield;
 
 private:
     // getAnalysisUsage - This pass requires the CallGraph.
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
     bool runOnModule(Module &M);
 
-    Process *process = nullptr;
+    Processor *process = nullptr;
     void walkGraph ( TerminatorInst *T );
     void walkGraph ( Instruction *I );
     void walkGraph ( BasicBlock &B );
     void walkGraph ( Function &F );
     void walkGraph ( CallGraphNode &N );
+
+    template <typename ProcessorT>
+    void walkGraph ( CallGraph &N );
 };
 
 
