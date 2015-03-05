@@ -38,11 +38,9 @@ get_name(Function const *f)
 namespace VVT {
 
 char ReachPass::ID = 0;
-static RegisterPass<ReachPass> X("reach", "Walk CFG");
+static RegisterPass<ReachPass> X("reach", "Reachability pass");
 
-ReachPass::ReachPass() : CallGraphSCCPass(ID)
-{
-}
+ReachPass::ReachPass() : CallGraphSCCPass(ID) { }
 
 void
 ReachPass::getAnalysisUsage(AnalysisUsage &AU) const {

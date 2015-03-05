@@ -31,15 +31,17 @@ char LiptonPass::ID = 0;
 static RegisterPass<LiptonPass> X("lipton", "Lipton reduction");
 
 LiptonPass::LiptonPass() : ModulePass(ID),
-        AA (getAnalysis<AliasAnalysis>()),
-        Reach (getAnalysis<ReachPass>()),
-        Yield (nullptr)
+        Yield (nullptr),
+        AA (nullptr),
+        Reach (nullptr)
 { }
 
 void
-LiptonPass::getAnalysisUsage(AnalysisUsage &AU) const {
-    AU.setPreservesAll();
-    AU.addRequired<AliasAnalysis>();
+LiptonPass::getAnalysisUsage(AnalysisUsage &AU) const
+{
+    AU.setPreservesCFG();
+    //AU.addRequired<AliasAnalysis>();
+    //AU.addRequired<CallGraphWrapperPass>();
     AU.addRequired<ReachPass>();
 }
 
@@ -142,12 +144,12 @@ struct Liptonize : public LiptonPass::Processor { // liptonize it, uhmmmhu
     movable(Instruction *I)
     {
         Function* F = I->getParent ()->getParent ();
-        unsigned TCount = Pass->Reach.Threads[F].size ();
+        unsigned TCount = Pass->Reach->Threads[F].size ();
         for (pair<Function *, vector<Instruction *>> &X : Pass->TI) {
             if (X.first == F && TCount == 1)
                 continue;
             for (Instruction *J : X.second) {
-                switch (Pass->AA.alias(J, I)) {
+                switch (Pass->AA->alias(J, I)) {
                 case AliasAnalysis::MayAlias:
                 case AliasAnalysis::PartialAlias:
                 case AliasAnalysis::MustAlias:
@@ -172,6 +174,7 @@ struct Liptonize : public LiptonPass::Processor { // liptonize it, uhmmmhu
         switch (m) {
         case RightMover:
             if (Area == LeftArea) {
+                assert (!dyn_cast<TerminatorInst>(I));
                 I->insertAfter(CallInst::Create(Pass->Yield));
                 return I->getNextNode();
             }
@@ -198,13 +201,14 @@ template <typename ProcessorT>
 void
 LiptonPass::walkGraph ( CallGraph &CG )
 {
-    for (pair<Function *, vector<Instruction *>> &X : Reach.Threads) {
+    for (pair<Function *, vector<Instruction *>> &X : Reach->Threads) {
 
         Function* Thread = X.first;
         ProcessorT processor(this, Thread, ProcessorT::Action);
         processor.initialize();
         process = &processor;
         walkGraph (*CG[Thread]);
+        delete process;
 
     }
 }
@@ -212,8 +216,13 @@ LiptonPass::walkGraph ( CallGraph &CG )
 bool
 LiptonPass::runOnModule (Module &M)
 {
+    //AA = &getAnalysis<AliasAnalysis>();
+    Reach = &getAnalysis<ReachPass>();
+    Reach->finalize();
     CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
     Yield = CG.getModule().getFunction("pthread_yield");
+    assert (Yield);
+
 
     walkGraph<Collect> ( CG );
     walkGraph<Liptonize> ( CG );

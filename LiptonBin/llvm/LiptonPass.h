@@ -30,8 +30,8 @@ public:
     LiptonPass();
 
     struct Processor {
-        LiptonPass *Pass;
-        Function *ThreadF;
+        LiptonPass                 *Pass;
+        Function                   *ThreadF;
         Processor(LiptonPass *L, Function *F, StringRef action) :
                 Pass(L),
                 ThreadF(F)
@@ -45,9 +45,9 @@ public:
     };
 
     ReachPass::ThreadCreateT    TI;
-    AliasAnalysis              &AA;
-    ReachPass                  &Reach;
     Function                   *Yield;
+    AliasAnalysis              *AA;
+    ReachPass                  *Reach;
 
 private:
     // getAnalysisUsage - This pass requires the CallGraph.
@@ -60,7 +60,6 @@ private:
     void walkGraph ( BasicBlock &B );
     void walkGraph ( Function &F );
     void walkGraph ( CallGraphNode &N );
-
     template <typename ProcessorT>
     void walkGraph ( CallGraph &N );
 };
