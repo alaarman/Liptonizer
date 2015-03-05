@@ -28,6 +28,7 @@ class LiptonPass : public ModulePass {
 public:
     static char ID;
     LiptonPass();
+    LiptonPass(ReachPass &RP);
 
     struct Processor {
         LiptonPass                 *Pass;
@@ -40,22 +41,25 @@ public:
         }
         virtual ~Processor() {}
         virtual void initialize() {}
-        virtual Instruction *operator()(LiptonPass *pass, Instruction *I)
+        virtual Instruction *operator()(Instruction *I)
                                        { return nullptr; }
+        virtual void yield(Instruction *I) { }
     };
 
-    ReachPass::ThreadCreateT    TI;
-    Function                   *Yield;
-    AliasAnalysis              *AA;
-    ReachPass                  *Reach;
+    ReachPass::ThreadCreateT        TI;
+    Function                       *Yield;
+    AliasAnalysis                  *AA;
+    ReachPass                      *Reach;
+    DenseMap<BasicBlock *, int>     Seen;
+    int                             StackDepth = 0;
 
 private:
+    Processor                      *handle = nullptr;
+
     // getAnalysisUsage - This pass requires the CallGraph.
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
     bool runOnModule(Module &M);
 
-    Processor *process = nullptr;
-    void walkGraph ( TerminatorInst *T );
     void walkGraph ( Instruction *I );
     void walkGraph ( BasicBlock &B );
     void walkGraph ( Function &F );

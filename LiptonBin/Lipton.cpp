@@ -21,7 +21,7 @@
 #include <llvm/Bitcode/ReaderWriter.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/LLVMContext.h>
-//#include <llvm/IR/PassManager.h>
+#include <llvm/IR/PassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IRReader/IRReader.h>
 #include <llvm/Support/ErrorOr.h>
@@ -29,7 +29,7 @@
 #include <llvm/Support/SourceMgr.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Scalar.h>
-#include <llvm/Transforms/IPO/PassManagerBuilder.h>
+//#include <llvm/Transforms/IPO/PassManagerBuilder.h>
 
 using namespace llvm;
 using namespace std;
@@ -87,25 +87,28 @@ main( int argc, const char* argv[] )
     X L;
     R->enumerateWith(&L);
 
-    PassManagerBuilder pmb;
-    pmb.OptLevel=0;
     PassManager pm;
-    pmb.populateModulePassManager(pm);
 
-    //CallGraphWrapperPass *cfgpass = new CallGraphWrapperPass();
+//    PassManagerBuilder pmb;
+//    pmb.OptLevel=0;
+//    pmb.populateModulePassManager(pm);
+
+    ImmutablePass *tbaa = createTypeBasedAliasAnalysisPass();
+    CallGraphWrapperPass *cfgpass = new CallGraphWrapperPass();
     ReachPass *reach = new ReachPass();
-    LiptonPass *lipton = new LiptonPass();
+    LiptonPass *lipton = new LiptonPass(*reach);
 
     //pm.add (indvars);
     //pm.add (lur);
-    //pm.add (cfgpass);
+    pm.add (cfgpass);
     pm.add (reach);
+    pm.add (tbaa);
     pm.add (lipton);
 
 
     pm.run (*m);
 
-    //reach->printClosure();
+    reach->printClosure();
     //CallGraph &cfg = cfgpass->getCallGraph();
 
     //delete reach;

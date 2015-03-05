@@ -42,8 +42,7 @@ public:
     ReachPass();
 
     void printClosure();
-    void finalize();
-
+    bool doFinalization(CallGraph &CG);
 private:
     int sccNum = 0;
     void reorder();
