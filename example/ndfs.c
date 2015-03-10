@@ -8,8 +8,9 @@ extern unsigned int __VERIFIER_nondet_uint();
 #include <stdlib.h>
 
 
-#define T       10
-#define MAX     10
+#define T           10
+#define MAX         10
+#define STACK_MAX   10
 
 typedef struct node_s node_t;
 
@@ -18,6 +19,8 @@ typedef enum color_e {
     blue,
     cyan
 } color_t;
+
+stack_t stack[T];
 
 struct node_s {
     bool            accepting;
@@ -30,19 +33,20 @@ struct node_s {
 
 node_t               s0;
 
-struct successors_s {
-    node_t          N[MAX];
+typedef struct stack_elem_s stack_elem_t;
+struct stack_elem_s {
+    node_t        **succs;
     size_t          count;
+    size_t          index;
+    stack_elem_t   *prev;
 };
-
-typedef struct successors_s successors_t;
 
 void
 init_node (node_t *s)
 {
     s->accepting = __VERIFIER_nondet_uint() % 2;
     s->red = __VERIFIER_nondet_uint() % 2;
-    s->count = __VERIFIER_nondet_uint() % T;
+    s->count = __VERIFIER_nondet_uint() % T; // TODO: T - 1?
     for (int i = 0; i < T; i++) {
         s->pink[i] = __VERIFIER_nondet_uint() % 2;
         s->color[i] = __VERIFIER_nondet_uint() % 3;
@@ -50,13 +54,24 @@ init_node (node_t *s)
 }
 
 static inline void
-init_successors (successors_t *next)
+delete_successors (stack_elem_t *stack)
 {
-    next->count = __VERIFIER_nondet_uint() % MAX;
-    next->N[next->count ];
-    for (int i = 0; i < next->count; i++) {
-        init_node (&next->N[i]);
+    free (stack->succs);
+    free (stack);
+}
+
+static inline stack_elem_t *
+create_successors (stack_elem_t *prev)
+{
+    stack_elem_t *elem = malloc (sizeof (stack_elem_t));
+    elem->count = __VERIFIER_nondet_uint() % MAX;
+    elem->succs = malloc (sizeof (node_t[elem->count]));
+    elem->index = 0;
+    elem->prev = prev;
+    for (int i = 0; i < elem->count; i++) {
+        init_node (elem->succs[i]);
     }
+    return elem;
 }
 
 static inline bool
@@ -72,37 +87,33 @@ blue_cyan_or_red (node_t *t, int p)
 }
 
 static inline bool
-all_pink_or_red_not_cyan (successors_t *next, int p)
+all_pink_or_red_not_cyan (stack_elem_t *next, int p)
 {
     for (size_t i = 0; i < next->count; i++)
-        if (!pink_or_red_not_cyan(&next->N[i], p)) return false;
+        if (!pink_or_red_not_cyan(next->succs[i], p)) return false;
     return true;
 }
 
 static inline bool
-all_blue_cyan_or_red (successors_t *next, int p)
+all_blue_cyan_or_red (stack_elem_t *next, int p)
 {
     for (size_t i = 0; i < next->count; i++)
-        if (!blue_cyan_or_red(&next->N[i], p)) return false;
+        if (!blue_cyan_or_red(next->succs[i], p)) return false;
     return true;
 }
 
 void
-dfsred (node_t *s, int p)
+dfsred (node_t *s, int p, stack_elem_t *stack)
 {
-    node_t *t;
-    successors_t next;
-    init_successors (&next);
+    stack_elem_t *next = create_successors (stack);
 
-    assert (all_blue_cyan_or_red(&next, p));
+    assert (all_blue_cyan_or_red(next, p));
     s->pink[p] = true;
-    int i = 0;
-
-    for (int i = 0; i < next.count; i++) {
-        t = &next.N[i];
+    for (int i = 0; i < next->count; i++) {
+        node_t *t = next->succs[i];
         if (t->color[p] == cyan) exit(1);
         if (!s->pink[p] && !t->red) {
-            dfsred(t, p);
+            dfsred(t, p, next);
         }
     }
 
@@ -111,40 +122,41 @@ dfsred (node_t *s, int p)
         while (*((volatile size_t *)&s->count) > 0) {}
     }
 
-    assert (all_pink_or_red_not_cyan(&next, p));
+    assert (all_pink_or_red_not_cyan(next, p));
     s->red = true;
     s->pink[p] = false;
+
+    delete_successors (next);
 }
 
 void
-dfsblue (node_t *s, int p)
+dfsblue (node_t *s, int p, stack_elem_t *stack)
 {
-    node_t *t;
-    successors_t next;
-    init_successors (&next);
+    stack_elem_t *next = create_successors (stack);
 
     s->color[p] = cyan;
-    int i = 0;
-    for (int i = 0; i < next.count; i++) {
-        t = &next.N[i];
+    for (int i = 0; i < next->count; i++) {
+        node_t *t = next->succs[i];
         if (t->color[p] == white && !t->red) {
-            dfsblue (t, p);
+            dfsblue (t, p, next);
         }
     }
     if (s->accepting) {
         __sync_fetch_and_add (&s->count, 1); // count += 1
-        dfsred (s, p);
+        dfsred (s, p, stack);
     }
 
-    assert (all_blue_cyan_or_red(&next, p));
+    assert (all_blue_cyan_or_red(next, p));
     s->color[p] = blue;
+    delete_successors (next);
 }
 
 void *
 ndfs (void *x)
 {
     int t = (size_t) x;
-    dfsblue (&s0, t);
+
+    dfsblue (&s0, t, NULL);
     return NULL;
 }
 
