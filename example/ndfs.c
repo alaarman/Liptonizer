@@ -12,7 +12,6 @@ extern unsigned int __VERIFIER_nondet_uint();
 #define MAX         10
 #define STACK_MAX   10
 
-typedef struct node_s node_t;
 
 typedef enum color_e {
     white,
@@ -20,34 +19,53 @@ typedef enum color_e {
     cyan
 } color_t;
 
-stack_t stack[T];
 
+typedef struct node_s node_t;
 struct node_s {
-    bool            accepting;
+    int             id;
+    bool            acc;
 
-    color_t         color[T];
+    color_t        *color;
+    bool           *pink;
     bool            red;
-    bool            pink[T];
     size_t          count;
+
+    int             num;
+    int            *succs;
 };
 
-node_t               s0;
+
+
+#define WHITE   (color_t[T]){white}
+#define FALSE   (bool[T]){false}
+#define INIT    .color=WHITE, .pink=FALSE, .red=false, .count=0
+
+static node_t graph[] = {
+    { .id=0, .acc=false, INIT, .succs=(int[]){0, 1, 2}, .num=3 },
+    { .id=1, .acc=true , INIT, .succs=(int[]){2}, .num=1 },
+    { .id=2, .acc=true , INIT, .succs=(int[]){3}, .num=1 },
+    { .id=3, .acc=false, INIT, .succs=(int[]){3}, .num=1 },
+};
+
+static node_t state0;
+static node_t             *s0 = &state0; // &graph[0];
+
 
 typedef struct stack_elem_s stack_elem_t;
 struct stack_elem_s {
     node_t         *s;
-    node_t        **succs;
-    size_t          count;
     size_t          index;
     stack_elem_t   *prev;
+    node_t         *next;
 };
 
 void
 init_node (node_t *s, node_t *prev, int index)
 {
-    s->accepting = __VERIFIER_nondet_uint() % 2;
+    s->acc = __VERIFIER_nondet_uint() % 2;
     s->red = __VERIFIER_nondet_uint() % 2;
     s->count = __VERIFIER_nondet_uint() % T; // TODO: T - 1?
+    s->num = __VERIFIER_nondet_uint() % MAX;
     for (int i = 0; i < T; i++) {
         s->pink[i] = __VERIFIER_nondet_uint() % 2;
         s->color[i] = __VERIFIER_nondet_uint() % 3;
@@ -58,7 +76,7 @@ init_node (node_t *s, node_t *prev, int index)
 static inline void
 delete_successors (stack_elem_t *stack)
 {
-    free (stack->succs);
+    free (stack->next);
     free (stack);
 }
 
@@ -66,13 +84,12 @@ static inline stack_elem_t *
 create_successors (stack_elem_t *prev, node_t *s)
 {
     stack_elem_t *elem = malloc (sizeof (stack_elem_t));
-    elem->count = __VERIFIER_nondet_uint() % MAX;
-    elem->succs = malloc (sizeof (node_t[elem->count]));
+    elem->next = malloc (sizeof (node_t[s->num]));
     elem->index = 0;
     elem->s = s;
     elem->prev = prev;
-    for (int i = 0; i < elem->count; i++) {
-        init_node (elem->succs[i], s, i);
+    for (int i = 0; i < s->num; i++) {
+        init_node (&elem->next[i], s, i);
     }
     return elem;
 }
@@ -90,18 +107,18 @@ blue_cyan_or_red (node_t *t, int p)
 }
 
 static inline bool
-all_pink_or_red_not_cyan (stack_elem_t *next, int p)
+all_pink_or_red_not_cyan (stack_elem_t *n, int p)
 {
-    for (size_t i = 0; i < next->count; i++)
-        if (!pink_or_red_not_cyan(next->succs[i], p)) return false;
+    for (size_t i = 0; i < n->s->num; i++)
+        if (!pink_or_red_not_cyan(&n->next[i], p)) return false;
     return true;
 }
 
 static inline bool
-all_blue_cyan_or_red (stack_elem_t *next, int p)
+all_blue_cyan_or_red (stack_elem_t *n, int p)
 {
-    for (size_t i = 0; i < next->count; i++)
-        if (!blue_cyan_or_red(next->succs[i], p)) return false;
+    for (size_t i = 0; i < n->s->num; i++)
+        if (!blue_cyan_or_red(&n->next[i], p)) return false;
     return true;
 }
 
@@ -113,8 +130,8 @@ dfsred (int p, stack_elem_t *stack)
     stack->s->pink[p] = true;
     while (stack) {
         node_t *s = stack->s;
-        if (stack->index != stack->count) {
-            node_t *t = stack->succs[stack->count++]; // popSuccessor
+        if (stack->index != s->num) {
+            node_t *t = &stack->next[stack->index++]; // popSuccessor
             if (t->color[p] == cyan) exit(1);
             if (!t->pink[p] && !t->red) {
                 //assert (all_blue_cyan_or_red(stack, p)); // TODO: pink_p \subseteq blue \cup cyan_p
@@ -122,7 +139,7 @@ dfsred (int p, stack_elem_t *stack)
                 stack = create_successors (stack, t);
             }
         } else { // backtrack:
-            if (s->accepting) {
+            if (s->acc) {
                 __sync_fetch_and_add (&s->count, -1); // count -= 1
                 while (*((volatile size_t *)&s->count) > 0) {}
             }
@@ -144,15 +161,15 @@ dfsblue (int p, stack_elem_t *stack)
     stack->s->color[p] = cyan;
     while (stack) {
         node_t *s = stack->s;
-        if (stack->index != stack->count) {
-            node_t *t = stack->succs[stack->count++]; // popSuccessor
+        if (stack->index != s->num) {
+            node_t *t = &stack->next[stack->index++]; // popSuccessor
             if (t->color[p] == white && !t->red) {
                 t->color[p] = cyan;
                 stack = create_successors (stack, t);
             }
         } else { // backtrack:
             assert (all_blue_cyan_or_red(stack, p));
-            if (s->accepting) {
+            if (s->acc) {
                 __sync_fetch_and_add (&s->count, 1); // count += 1
                 dfsred (p, stack);
             }
@@ -169,7 +186,7 @@ ndfs (void *x)
 {
     int t = (size_t) x;
 
-    stack_elem_t *stack = create_successors (stack, &s0);
+    stack_elem_t *stack = create_successors (stack, s0);
     dfsblue (t, stack);
     return NULL;
 }
@@ -177,7 +194,7 @@ ndfs (void *x)
 int
 main ()
 {
-    init_node (&s0, NULL, 0);
+    init_node (s0, NULL, 0);
 
     pthread_t threads[T];
     for (size_t i = 0; i < T; i++) {
