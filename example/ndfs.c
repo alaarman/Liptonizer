@@ -59,8 +59,6 @@ init_successors (successors_t *next)
     }
 }
 
-typedef bool (*prop_f) (node_t *t, int p);
-
 static inline bool
 pink_or_red_not_cyan (node_t *t, int p)
 {
@@ -74,10 +72,18 @@ blue_cyan_or_red (node_t *t, int p)
 }
 
 static inline bool
-all (successors_t *next, prop_f prop, int p)
+all_pink_or_red_not_cyan (successors_t *next, int p)
 {
     for (size_t i = 0; i < next->count; i++)
-        if (!prop(&next->N[i], p)) return false;
+        if (!pink_or_red_not_cyan(&next->N[i], p)) return false;
+    return true;
+}
+
+static inline bool
+all_blue_cyan_or_red (successors_t *next, int p)
+{
+    for (size_t i = 0; i < next->count; i++)
+        if (!blue_cyan_or_red(&next->N[i], p)) return false;
     return true;
 }
 
@@ -88,7 +94,7 @@ dfsred (node_t *s, int p)
     successors_t next;
     init_successors (&next);
 
-    assert (all(&next, blue_cyan_or_red, p));
+    assert (all_blue_cyan_or_red(&next, p));
     s->pink[p] = true;
     int i = 0;
 
@@ -105,7 +111,7 @@ dfsred (node_t *s, int p)
         while (*((volatile size_t *)&s->count) > 0) {}
     }
 
-    assert (all(&next, pink_or_red_not_cyan, p));
+    assert (all_pink_or_red_not_cyan(&next, p));
     s->red = true;
     s->pink[p] = false;
 }
@@ -130,7 +136,7 @@ dfsblue (node_t *s, int p)
         dfsred (s, p);
     }
 
-    assert (all(&next, blue_cyan_or_red, p));
+    assert (all_blue_cyan_or_red(&next, p));
     s->color[p] = blue;
 }
 
