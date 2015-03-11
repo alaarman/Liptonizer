@@ -12,7 +12,7 @@
 #define VERIFIER 1
 #define TEST 2
 
-#define RANDOM_GRAPH NO
+#define RANDOM_GRAPH TEST
 
 
 #define DODEBUG
@@ -148,7 +148,8 @@ rand_local (node_t *prev, node_t *s, int p)
     rand_color (s, p);
     s->pink[p] = randuint() % 2;
 
-    while (prev && prev->pink[p] && !blue_cyan_or_red(s, p)) {
+    while (prev && (prev->color[p] == blue || prev->pink[p]) &&
+            !blue_cyan_or_red(s, p)) {
         rand_red (s);
         rand_color (s, p);
     }
@@ -275,7 +276,7 @@ print ("[%d] pink %d\n", p, stack->s->id);
         if (stack->index != s->num) {
             node_t *t = stack->next[stack->index++]; // popSuccessor
             if (t->color[p] == cyan) {
-                print ("[%d] FOUND %d\n", p, t->id);
+print ("[%d] FOUND %d\n", p, t->id);
                 exit(1);
             }
             if (!t->pink[p] && !t->red) {
