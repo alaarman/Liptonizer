@@ -5,3 +5,9 @@ cmake_install.cmake
 *.so
 /Debug
 LiptonBin/LiptonBin
+example/ndfs
+example/ndfs.bc
+example/ndfs.i
+example/ndfs.ll
+example/ndfs.o
+example/ndfs.s

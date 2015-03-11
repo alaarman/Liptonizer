@@ -17,7 +17,7 @@
 
 #define DODEBUG
 
-#define T           10
+#define T           3
 #define MAX         10
 #define STACK_MAX   10
 
@@ -149,7 +149,7 @@ rand_local (node_t *prev, node_t *s, int p)
     s->pink[p] = randuint() % 2;
 
     while (prev && (prev->color[p] == blue || prev->pink[p]) &&
-            !blue_cyan_or_red(s, p)) {
+            !blue_cyan_or_red(s, p)) { // By Lemma L1
         rand_red (s);
         rand_color (s, p);
     }
@@ -158,14 +158,17 @@ rand_local (node_t *prev, node_t *s, int p)
 static inline void
 rand_node (node_t *prev, node_t *s)
 {
-    rand_red (s);
     s->id = randuint() % 100;
     s->acc = randuint() % 2;
     s->count = 0;//randuint() % (T -1); //TODO
     s->num = randuint() % MAX;
+    rand_red (s);
+    bool is_blue = false;
     for (int i = 0; i < T; i++) {
         rand_local (prev, s, i);
+        is_blue |= s->color[i] == blue;
     }
+    s->red |= s->acc && is_blue; // By Lemma L3
 }
 
 node_t *
@@ -236,6 +239,7 @@ create_successors (stack_elem_t *prev, node_t *s)
     return elem;
 }
 
+// Lemma L2
 static inline bool
 all_pink_or_red_not_cyan (stack_elem_t *n, int p)
 {
@@ -246,6 +250,7 @@ all_pink_or_red_not_cyan (stack_elem_t *n, int p)
     return true;
 }
 
+// Lemma L1
 static inline bool
 all_blue_cyan_or_red (stack_elem_t *n, int p)
 {
@@ -264,11 +269,19 @@ stack_pop (stack_elem_t *stack)
     return prev;
 }
 
-void
+static inline void
+make_pink (node_t* s, int p)
+{
+    assert (!s->acc || s->color[p]==cyan); //Lemma L4
+    assert (s->color[p]==blue || s->color[p]==cyan); //Lemma L5
+    s->pink[p] = true;
+}
+
+static void
 dfsred (int p, stack_elem_t *stack)
 {
+    assert (all_blue_cyan_or_red(stack, p)); //Lemma L1
     stack_elem_t *seed = stack;
-    assert (all_blue_cyan_or_red(stack, p));
 print ("[%d] pink %d\n", p, stack->s->id);
     stack->s->pink[p] = true;
     while (stack) {
@@ -280,17 +293,20 @@ print ("[%d] FOUND %d\n", p, t->id);
                 exit(1);
             }
             if (!t->pink[p] && !t->red) {
-                assert (all_blue_cyan_or_red(stack, p));
-                t->pink[p] = true;
-print ("[%d] pink %d\n", p, t->id);
+                print ("[%d] pink %d\n", p, t->id);
+                // By Lemma L1 (base case checked at function entry)
+                // AND !CYAN AND !RED
+                t->color[p] = blue; // assume (blue)
                 stack = create_successors (stack, t);
+                assert (all_blue_cyan_or_red(stack, p)); //Lemma L1
+                make_pink (t, p);
             }
         } else { // backtrack:
             if (s->acc) {
                 __sync_fetch_and_add (&s->count, -1); // count -= 1
                 while (*((volatile size_t *)&s->count) > 0) {}
             }
-            assert (all_pink_or_red_not_cyan(stack, p));
+            assert (all_pink_or_red_not_cyan(stack, p)); //Lemma L2
 print ("[%d] red %d\n", p, s->id);
             s->red = true;
             s->pink[p] = false;
@@ -301,7 +317,14 @@ print ("[%d] red %d\n", p, s->id);
     }
 }
 
-void
+static inline void
+make_blue (node_t* s, int p)
+{
+    assert (!s->acc || s->red); // Lemma L3
+    s->color[p] = blue;
+}
+
+static void
 dfsblue (int p, stack_elem_t *stack)
 {
 print ("[%d] cyan %d\n", p, stack->s->id);
@@ -316,14 +339,14 @@ print ("[%d] cyan %d\n", p, t->id);
                 stack = create_successors (stack, t);
             }
         } else { // backtrack:
-            assert (all_blue_cyan_or_red(stack, p));
+            assert (all_blue_cyan_or_red(stack, p));  //Lemma L1
             if (s->acc) {
                 __sync_fetch_and_add (&s->count, 1); // count += 1
                 stack->index = 0; // rewind
                 dfsred (p, stack);
             }
 print ("[%d] blue %d\n", p, s->id);
-            s->color[p] = blue;
+            make_blue (s, p);
             stack = stack_pop (stack);
         }
     }
