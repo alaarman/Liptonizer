@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 
@@ -56,6 +57,8 @@ struct stack_elem_s {
     node_t        **next;
 };
 
+
+/*
 extern unsigned int __VERIFIER_nondet_uint();
 
 node_t *
@@ -79,6 +82,17 @@ deinit_node (node_t *s)
 {
     free (s);
 }
+*/
+
+node_t *
+init_node (node_t *prev, int index)
+{
+    if (prev == NULL)
+        return &graph[ 0 ];
+    return &graph[ prev->succs[index] ];
+}
+
+void deinit_node (node_t *s) {}
 
 static inline void
 delete_successors (stack_elem_t *stack)
@@ -120,7 +134,9 @@ static inline bool
 all_pink_or_red_not_cyan (stack_elem_t *n, int p)
 {
     for (size_t i = 0; i < n->s->num; i++)
-        if (!pink_or_red_not_cyan(n->next[i], p)) return false;
+        if (!pink_or_red_not_cyan(n->next[i], p)) {
+            return false;
+        }
     return true;
 }
 
@@ -128,8 +144,18 @@ static inline bool
 all_blue_cyan_or_red (stack_elem_t *n, int p)
 {
     for (size_t i = 0; i < n->s->num; i++)
-        if (!blue_cyan_or_red(n->next[i], p)) return false;
+        if (!blue_cyan_or_red(n->next[i], p)) {
+            return false;
+        }
     return true;
+}
+
+static stack_elem_t *
+stack_pop (stack_elem_t *stack)
+{
+    stack_elem_t *prev = stack->prev;
+    delete_successors(stack);
+    return prev;
 }
 
 void
@@ -137,6 +163,7 @@ dfsred (int p, stack_elem_t *stack)
 {
     stack_elem_t *seed = stack;
     //assert (all_blue_cyan_or_red(stack, p)); // TODO: pink_p \subseteq blue \cup cyan_p
+printf ("[%d] pink %d\n", p, stack->s->id);
     stack->s->pink[p] = true;
     while (stack) {
         node_t *s = stack->s;
@@ -146,6 +173,7 @@ dfsred (int p, stack_elem_t *stack)
             if (!t->pink[p] && !t->red) {
                 //assert (all_blue_cyan_or_red(stack, p)); // TODO: pink_p \subseteq blue \cup cyan_p
                 t->pink[p] = true;
+printf ("[%d] pink %d\n", p, t->id);
                 stack = create_successors (stack, t);
             }
         } else { // backtrack:
@@ -154,13 +182,12 @@ dfsred (int p, stack_elem_t *stack)
                 while (*((volatile size_t *)&s->count) > 0) {}
             }
             assert (all_pink_or_red_not_cyan(stack, p));
+printf ("[%d] red %d\n", p, s->id);
             s->red = true;
             s->pink[p] = false;
 
             if (stack == seed) return; // dfsblue does cleanup
-            stack_elem_t *stackp = stack;
-            stack = stack->prev;
-            delete_successors(stackp);
+            stack = stack_pop (stack);
         }
     }
 }
@@ -168,6 +195,7 @@ dfsred (int p, stack_elem_t *stack)
 void
 dfsblue (int p, stack_elem_t *stack)
 {
+printf ("[%d] cyan %d\n", p, stack->s->id);
     stack->s->color[p] = cyan;
     while (stack) {
         node_t *s = stack->s;
@@ -175,18 +203,19 @@ dfsblue (int p, stack_elem_t *stack)
             node_t *t = stack->next[stack->index++]; // popSuccessor
             if (t->color[p] == white && !t->red) {
                 t->color[p] = cyan;
+printf ("[%d] cyan %d\n", p, t->id);
                 stack = create_successors (stack, t);
             }
         } else { // backtrack:
             assert (all_blue_cyan_or_red(stack, p));
             if (s->acc) {
                 __sync_fetch_and_add (&s->count, 1); // count += 1
+                stack->index = 0; // rewind
                 dfsred (p, stack);
             }
+printf ("[%d] blue %d\n", p, s->id);
             s->color[p] = blue;
-            stack_elem_t *stackp = stack;
-            stack = stack->prev;
-            delete_successors(stackp);
+            stack = stack_pop (stack);
         }
     }
 }
@@ -196,7 +225,7 @@ ndfs (void *x)
 {
     int t = (size_t) x;
 
-    stack_elem_t *stack = create_successors (stack, s0);
+    stack_elem_t *stack = create_successors (NULL, s0);
     dfsblue (t, stack);
     return NULL;
 }
