@@ -12,10 +12,10 @@
 #define VERIFIER 1
 #define TEST 2
 
-#define RANDOM_GRAPH TEST
+#define RANDOM_GRAPH 1
 
 
-#define DODEBUG
+//#define DODEBUG
 
 #define T           3
 #define MAX         10
@@ -78,7 +78,7 @@ extern unsigned int randuint();
 
 #if RANDOM_GRAPH==VERIFIER
 
-extern unsigned int __VERIFIER_nondet_uint();
+unsigned int __VERIFIER_nondet_uint() { return -99999999; }
 
 inline unsigned int
 randuint ()
