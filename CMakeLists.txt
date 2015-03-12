@@ -36,7 +36,5 @@ SET (CMAKE_RANLIB  "${LLVM_TOOLS_BINARY_DIR}/llvm-ranlib")
 include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions( ${LLVM_DEFINITIONS} )
 
-
-add_subdirectory(Lipton)
 add_subdirectory(LiptonBin)
 
