@@ -105,7 +105,9 @@ main( int argc, const char* argv[] )
     Pass *aac = createAliasAnalysisCounterPass();
     CallGraphWrapperPass *cfgpass = new CallGraphWrapperPass();
     ReachPass *reach = new ReachPass();
-    LiptonPass *lipton = new LiptonPass(*reach);
+
+    string name(ll, 0 , ll.size() - 3);
+    LiptonPass *lipton = new LiptonPass(*reach, name);
 
     //pm.add (indvars);
     //pm.add (lur);

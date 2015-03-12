@@ -18,7 +18,11 @@
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/Function.h>
-#include <llvm/Support/raw_ostream.h>
+#include <llvm/IR/Verifier.h>
+#include <llvm/BitCode/ReaderWriter.h>
+#include <llvm/Support/raw_os_ostream.h>
+#include <llvm/Support/FileOutputBuffer.h>
+#include <llvm/Support/FileSystem.h>
 
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/IR/ValueMap.h>
@@ -41,12 +45,14 @@ char LiptonPass::ID = 0;
 static RegisterPass<LiptonPass> X("lipton", "Lipton reduction");
 
 LiptonPass::LiptonPass () : ModulePass(ID),
+        Name ("out"),
         Yield (nullptr),
         AA (nullptr),
         Reach (nullptr)
 { }
 
-LiptonPass::LiptonPass (ReachPass &RP) : ModulePass(ID),
+LiptonPass::LiptonPass (ReachPass &RP, string name) : ModulePass(ID),
+        Name (name),
         Yield (nullptr),
         AA (nullptr),
         Reach (&RP)
@@ -91,27 +97,19 @@ LiptonPass::insertYield (Instruction *I, yield_loc_e loc)
     //Call->set
 }
 
+
 mover_e
 LiptonPass::movable(Instruction *I)
 {
     Function* F = I->getParent ()->getParent ();
     unsigned TCount = Reach->Threads[F].size ();
-    for (pair<Function *, vector<Instruction *>> &X : TI) {
+    for (pair<Function *, AliasSetTracker *> &X : ThreadAliases) {
         if (X.first == F && TCount == 1)
             continue;
-        for (Instruction *J : X.second) { //TODO: locks
-            switch (AA->alias(J, I)) {
-            case AliasAnalysis::MayAlias:
-            case AliasAnalysis::PartialAlias:
-            case AliasAnalysis::MustAlias:
-                return NoneMover;
-            case AliasAnalysis::NoAlias:
-                outs () << "No alias: " << *I << " & " << *J <<"/n";
-                break;
-            default:
-                ASSERT (false, "Missing case.");
-            }
-        }
+
+        for (AliasSet &s : *X.second) {
+            if (s.aliasesUnknownInst(I, *AA)) return NoneMover;
+        } // TODO: locks
     }
     return BothMover;
 }
@@ -176,7 +174,10 @@ struct Collect : public LiptonPass::Processor {
     Instruction *
     process (Instruction *I)
     {
-        Pass->TI[ThreadF].push_back (I);
+        AliasSetTracker *AST = Pass->ThreadAliases[ThreadF];
+        if (AST == nullptr)
+            AST = Pass->ThreadAliases[ThreadF] = new AliasSetTracker (*Pass->AA);
+        AST->add (I);
         return I;
     }
 };
@@ -193,7 +194,7 @@ struct Liptonize : public LiptonPass::Processor {
         case RightMover: return "RightMover";
         case LeftMover:  return "LeftMover";
         case NoneMover:  return "NoneMover";
-        case BothMover:  return "BothModer";
+        case BothMover:  return "BothMover";
         default: ASSERT (false, "Missing case.");
         }
     }
@@ -381,7 +382,23 @@ LiptonPass::runOnModule (Module &M)
     walkGraph<Collect> ();
     walkGraph<Liptonize> ();
 
-    //outs () << M << "\n";
+    verifyModule (M, &errs());
+
+    string n(Name);
+    n.append("-lipton.ll");
+    const char* data = n.data ();
+    std::string error = string ("ERROR");
+    raw_fd_ostream file(data, error, sys::fs::OpenFlags::F_Text);
+
+    file << M << "\n";
+
+    string n2(Name);
+    n2.append("-lipton.bc");
+    const char* data2 = n2.data ();
+    raw_fd_ostream file2(data2, error, sys::fs::OpenFlags::F_RW);
+
+    WriteBitcodeToFile(&M, file2);
+
     outs() << dynamic_cast<Pass*>(AA)->getPassName() << endll;
 
     return true;

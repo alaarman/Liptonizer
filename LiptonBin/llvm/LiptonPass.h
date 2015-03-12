@@ -16,6 +16,7 @@
 #include <llvm/IR/Instruction.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/AliasAnalysis.h>
+#include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/ADT/DenseMap.h>
 
 
@@ -39,9 +40,10 @@ class LiptonPass : public ModulePass {
 
 public:
     static char ID;
-    LiptonPass();
-    LiptonPass(ReachPass &RP);
+    string Name;
 
+    LiptonPass();
+    LiptonPass(ReachPass &RP, string name);
 
     struct Processor {
         LiptonPass                 *Pass;
@@ -56,7 +58,8 @@ public:
         virtual void deblock (BasicBlock &B) {  }
     };
 
-    ReachPass::ThreadCreateT        TI;
+
+    DenseMap<Function *, AliasSetTracker *> ThreadAliases;
     Function                       *Yield;
     AliasAnalysis                  *AA;
     ReachPass                      *Reach;
