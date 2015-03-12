@@ -23,8 +23,10 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/PassManager.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/Verifier.h>
 #include <llvm/IRReader/IRReader.h>
 #include <llvm/Support/ErrorOr.h>
+#include <llvm/Support/FileSystem.h>
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/SourceMgr.h>
 #include <llvm/Support/raw_ostream.h>
@@ -51,7 +53,7 @@ main( int argc, const char* argv[] )
     ASSERT (argc == 2, "Require an argument. Pass a .ll or .bc file (argc = "<< argc <<").\n");
 
     string ll(argv[1]);
-    Module *m;
+    Module *M;
     LLVMContext &context = getGlobalContext();
     if (ends_with(ll, ".bc")) {
         ErrorOr<unique_ptr<MemoryBuffer>> buf_ptr_ptr = MemoryBuffer::getFileOrSTDIN(ll);
@@ -65,11 +67,11 @@ main( int argc, const char* argv[] )
             cout << argv[0] << mod.getError();
             return 1;
         }
-        m = mod.get();
+        M = mod.get();
     } else if (ends_with(ll, ".ll")) {
         SMDiagnostic err;
-        m = ParseIRFile(ll, err, context);
-        if (!m) {
+        M = ParseIRFile(ll, err, context);
+        if (!M) {
           err.print(argv[0], errs());
           return 1;
         }
@@ -78,7 +80,7 @@ main( int argc, const char* argv[] )
         exit(1);
     }
 
-    Function *main = m->getFunction("main");
+    Function *main = M->getFunction("main");
     ASSERT (main, "No 'main' function. Library?\n");
 
     //initializeTypeBasedAliasAnalysisPass(*R);
@@ -120,13 +122,29 @@ main( int argc, const char* argv[] )
     pm.add (aac);
     pm.add (lipton);
 
-
-    pm.run (*m);
+    pm.run (*M);
 
     reach->printClosure();
-    //CallGraph &cfg = cfgpass->getCallGraph();
 
-    //delete reach;
+    // verify
+    verifyModule (*M, &errs());
+
+    size_t last = name.rfind('/');
+    // write out
+    string n(&name[last + 1]);
+    n.append("-lipton.ll");
+    const char* data = n.data ();
+    std::string error = string ("ERROR");
+    raw_fd_ostream file(data, error, sys::fs::OpenFlags::F_Text);
+
+    file << *M << "\n";
+
+    string n2(&name[last + 1]);
+    n2.append("-lipton.bc");
+    const char* data2 = n2.data ();
+    raw_fd_ostream file2(data2, error, sys::fs::OpenFlags::F_RW);
+
+    WriteBitcodeToFile(M, file2);
 }
 
 

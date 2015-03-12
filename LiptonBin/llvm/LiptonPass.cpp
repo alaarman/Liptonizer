@@ -18,11 +18,7 @@
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/InstIterator.h>
 #include <llvm/IR/Function.h>
-#include <llvm/IR/Verifier.h>
 #include <llvm/BitCode/ReaderWriter.h>
-#include <llvm/Support/raw_os_ostream.h>
-#include <llvm/Support/FileOutputBuffer.h>
-#include <llvm/Support/FileSystem.h>
 
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/IR/ValueMap.h>
@@ -381,23 +377,6 @@ LiptonPass::runOnModule (Module &M)
 
     walkGraph<Collect> ();
     walkGraph<Liptonize> ();
-
-    verifyModule (M, &errs());
-
-    string n(Name);
-    n.append("-lipton.ll");
-    const char* data = n.data ();
-    std::string error = string ("ERROR");
-    raw_fd_ostream file(data, error, sys::fs::OpenFlags::F_Text);
-
-    file << M << "\n";
-
-    string n2(Name);
-    n2.append("-lipton.bc");
-    const char* data2 = n2.data ();
-    raw_fd_ostream file2(data2, error, sys::fs::OpenFlags::F_RW);
-
-    WriteBitcodeToFile(&M, file2);
 
     outs() << dynamic_cast<Pass*>(AA)->getPassName() << endll;
 
