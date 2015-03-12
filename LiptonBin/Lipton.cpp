@@ -54,8 +54,13 @@ main( int argc, const char* argv[] )
     Module *m;
     LLVMContext &context = getGlobalContext();
     if (ends_with(ll, ".bc")) {
-        ErrorOr<unique_ptr<MemoryBuffer>>  buf = MemoryBuffer::getFileOrSTDIN(ll);
-        ErrorOr<Module*> mod = parseBitcodeFile(buf->get(), context);
+        ErrorOr<unique_ptr<MemoryBuffer>> buf_ptr_ptr = MemoryBuffer::getFileOrSTDIN(ll);
+        if (!buf_ptr_ptr) {
+            cout << "Failed reading " << ll << ". Error: "<<buf_ptr_ptr.getError() << endl;
+            return 1;
+        }
+        unique_ptr<MemoryBuffer> &bufptr = *buf_ptr_ptr;
+        ErrorOr<Module*> mod = parseBitcodeFile(bufptr.get(), context);
         if (!mod) {
             cout << argv[0] << mod.getError();
             return 1;
@@ -93,7 +98,11 @@ main( int argc, const char* argv[] )
 //    pmb.OptLevel=0;
 //    pmb.populateModulePassManager(pm);
 
-    ImmutablePass *tbaa = createTypeBasedAliasAnalysisPass();
+    Pass *aa1 = createAAEvalPass();
+    //Pass *aa2 = createBasicAliasAnalysisPass();
+    Pass *aa3 = createTypeBasedAliasAnalysisPass();
+    Pass *aa4 = createObjCARCAliasAnalysisPass();
+    Pass *aac = createAliasAnalysisCounterPass();
     CallGraphWrapperPass *cfgpass = new CallGraphWrapperPass();
     ReachPass *reach = new ReachPass();
     LiptonPass *lipton = new LiptonPass(*reach);
@@ -102,7 +111,11 @@ main( int argc, const char* argv[] )
     //pm.add (lur);
     pm.add (cfgpass);
     pm.add (reach);
-    pm.add (tbaa);
+    pm.add (aa1);
+    //pm.add (aa2);
+    pm.add (aa3);
+    pm.add (aa4);
+    pm.add (aac);
     pm.add (lipton);
 
 

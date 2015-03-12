@@ -45,7 +45,7 @@ public:
     bool doFinalization(CallGraph &CG);
 private:
     int sccNum = 0;
-    void reorder();
+    void reorder_calls();
 
     // getAnalysisUsage - This pass requires the CallGraph.
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;

@@ -23,6 +23,18 @@ using namespace llvm;
 
 namespace VVT {
 
+enum yield_loc_e {
+    YIELD_BEFORE,
+    YIELD_AFTER
+};
+
+enum mover_e {
+    RightMover = 0,
+    NoneMover,
+    LeftMover,
+    BothMover,
+};
+
 class LiptonPass : public ModulePass {
 
 public:
@@ -30,42 +42,41 @@ public:
     LiptonPass();
     LiptonPass(ReachPass &RP);
 
+
     struct Processor {
         LiptonPass                 *Pass;
-        Function                   *ThreadF;
-        Processor(LiptonPass *L, Function *F, StringRef action) :
-                Pass(L),
-                ThreadF(F)
-        {
-            outs() << action <<" "<< F->getName() <<"\n";
-        }
+        Function                   *ThreadF = NULL;
+        Processor(LiptonPass *L, StringRef action) : Pass(L) {  }
         virtual ~Processor() {}
-        virtual void initialize() {}
-        virtual Instruction *operator()(Instruction *I)
-                                       { return nullptr; }
-        virtual void yield(Instruction *I) { }
+        virtual Instruction *process (Instruction *I)
+                                     { return nullptr; }
+        virtual void yield (Instruction *I) { }
+        virtual void thread (Function *F) {}
+        virtual bool block (BasicBlock &B) { return false; }
+        virtual void deblock (BasicBlock &B) {  }
     };
 
     ReachPass::ThreadCreateT        TI;
     Function                       *Yield;
     AliasAnalysis                  *AA;
     ReachPass                      *Reach;
-    DenseMap<BasicBlock *, int>     Seen;
-    int                             StackDepth = 0;
+
+    bool isYieldCall (Instruction *I);
+    void insertYield (Instruction *I, yield_loc_e loc);
+    mover_e movable(Instruction *I);
 
 private:
     Processor                      *handle = nullptr;
 
     // getAnalysisUsage - This pass requires the CallGraph.
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
-    bool runOnModule(Module &M);
+    bool runOnModule (Module &M);
 
     void walkGraph ( Instruction *I );
     void walkGraph ( BasicBlock &B );
     void walkGraph ( Function &F );
-    void walkGraph ( CallGraphNode &N );
     template <typename ProcessorT>
-    void walkGraph ( CallGraph &N );
+    void walkGraph ();
 };
 
 

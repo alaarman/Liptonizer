@@ -52,8 +52,11 @@ void
 ReachPass::addInstruction (unsigned index, Instruction *I)
 {
     pair<Instruction *, unsigned> p = make_pair (I, index);
-    bool seen = instructionMap.insert (p).second;
-    ASSERT (seen, "Instruction added twice: " << I);
+    bool added = instructionMap.insert (p).second;
+    if (!added) {
+        outs() << "Instruction added twice: " << *I <<"\n";
+        assert(false);
+    }
 }
 
 static Instruction *
@@ -79,7 +82,7 @@ struct CompareFunctor {
 };
 
 void
-ReachPass::reorder()
+ReachPass::reorder_calls()
 {
     for (CallMapET call :  calls) {
         BasicBlock *bb = call.first;
@@ -121,12 +124,14 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
 
         BasicBlock *callerBlock = callInstr->getParent ();
         calls[callerBlock].push_back (make_pair (callInstr, callee));
+    }
+    for (BasicBlock &B : *F) {
         unsigned index = 0;
-        for (Instruction &I : *callerBlock) {
+        for (Instruction &I : B) {
             addInstruction (index++, &I);
         }
     }
-    reorder ();
+    reorder_calls ();
 
     // SCC iterator (on block level) within function F
     for (scc_iterator<Function*> bSCC = scc_begin(F); !bSCC.isAtEnd(); ++bSCC) {
