@@ -12,7 +12,8 @@ add_executable(LiptonBin
                     llvm/LiptonPass.cpp
                     Lipton.cpp)
 
-include_directories(.)
+include_directories(. ~/andersen/include/)
 
 # Link against LLVM libraries
-target_link_libraries(LiptonBin ${llvm_libs})
+target_link_libraries(LiptonBin ${llvm_libs} ~/Workspace/LLVMPass/lib/libAnders.a)
+

@@ -1,11 +1,14 @@
 
 #include "llvm/LiptonPass.h"
 #include "llvm/ReachPass.h"
+#include "llvm/Util.h"
 #include "util/Util.h"
 
 #include <iostream>
 #include <string>
 
+#include <Andersen.h>
+#include <AndersenAA.h>
 //#include <llvm/LinkAllPasses.h>
 #include <llvm/Pass.h>
 #include <llvm/PassSupport.h>
@@ -19,6 +22,7 @@
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/Analysis/Passes.h>
 #include <llvm/Bitcode/ReaderWriter.h>
+#include <llvm/IR/DataLayout.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/PassManager.h>
@@ -100,26 +104,36 @@ main( int argc, const char* argv[] )
 //    pmb.OptLevel=0;
 //    pmb.populateModulePassManager(pm);
 
-    Pass *aa1 = createAAEvalPass();
+    //Pass *aa1 = createAAEvalPass();
     //Pass *aa2 = createBasicAliasAnalysisPass();
     Pass *aa3 = createTypeBasedAliasAnalysisPass();
     Pass *aa4 = createObjCARCAliasAnalysisPass();
+    Pass *aa5 = createGlobalsModRefPass();
     Pass *aac = createAliasAnalysisCounterPass();
+    Pass *ba = createBasicAliasAnalysisPass();
+    Pass *aae = createAAEvalPass();
+    Pass *dlp = new DataLayoutPass(M);
+    Pass *aaa = new AndersenAA();
     CallGraphWrapperPass *cfgpass = new CallGraphWrapperPass();
     ReachPass *reach = new ReachPass();
 
     string name(ll, 0 , ll.size() - 3);
-    LiptonPass *lipton = new LiptonPass(*reach, name);
+    LiptonPass *lipton = new LiptonPass(*reach, name, false);
 
     //pm.add (indvars);
     //pm.add (lur);
     pm.add (cfgpass);
     pm.add (reach);
-    pm.add (aa1);
+    pm.add (dlp);
+    //pm.add (aa3);
+    //pm.add (aa1);
     //pm.add (aa2);
-    pm.add (aa3);
-    pm.add (aa4);
-    pm.add (aac);
+    //pm.add (aa3);
+    //pm.add (aa4);
+    //pm.add (aa5);
+    //pm.add (aac);
+    pm.add (aaa);
+    pm.add (aae);
     pm.add (lipton);
 
     pm.run (*M);
@@ -138,6 +152,8 @@ main( int argc, const char* argv[] )
     raw_fd_ostream file(data, error, sys::fs::OpenFlags::F_Text);
 
     file << *M << "\n";
+
+    //outs() << dynamic_cast<Pass*>(&lipton->getAnalysis<AliasAnalysis> ())->getPassName() << endll;
 
     string n2(&name[last + 1]);
     n2.append("-lipton.bc");
