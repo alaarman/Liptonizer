@@ -112,6 +112,10 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
     for (CallGraphNode::CallRecord rec : *node) {
         Function *callee = rec.second->getFunction ();
         Instruction *callInstr = getInstr (rec);
+        if (callee == nullptr) {
+            outs() << "XXXXXXXXXXXXXXXXXX" << callInstr;
+            continue;
+        }
         if (callee->getName() == "pthread_create") {
             Function *threadF = dyn_cast<Function> (callInstr->getOperand (2));
             ASSERT (threadF, "Incorrect pthread_create argument?");
