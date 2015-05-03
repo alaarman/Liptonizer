@@ -163,7 +163,7 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
         }
     }
 
-    printNode (node, SCC);
+    //printNode (node, SCC);
 
     // SCC iterator (on block level) within function F
     for (scc_iterator<Function *> bSCC = scc_begin(F); !bSCC.isAtEnd(); ++bSCC) {

@@ -1,7 +1,7 @@
 
-#include "LiptonPass.h"
 #include "util/BitMatrix.h"
 #include "util/Util.h"
+#include "llvm/LiptonPass.h"
 #include "llvm/Util.h"
 
 #include <algorithm>    // std::sort
@@ -33,8 +33,11 @@ namespace VVT {
 //TODO: locks are left movers!
 
 static const char* PTHREAD_YIELD    = "pthread_yield";
-//static const char* PTHREAD_CREATE   = "pthread_create";
-//static const char* PTHREAD_JOIN     = "pthread_join";
+static const char* PTHREAD_CREATE   = "pthread_create";
+static const char* PTHREAD_JOIN     = "pthread_join";
+static const char* PTHREAD_LOCK     = "pthread_mutex_lock";
+static const char* PTHREAD_UNLOCK   = "pthread_mutex_unlock";
+static const char* PTHREAD_MUTEX_INIT = "pthread_mutex_init";
 
 
 char LiptonPass::ID = 0;
@@ -131,14 +134,26 @@ struct Collect : public LiptonPass::Processor {
     using Processor::Processor;
     ~Collect() { }
 
-    void yield (Instruction *I) {}
-
+    bool
+    yield (CallInst *call)
+    {
+        if (call->getCalledFunction ()->getName ().endswith(PTHREAD_YIELD)) {
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_LOCK)) {
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_UNLOCK)) {
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_CREATE)) {
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_JOIN)) {
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_MUTEX_INIT)) {
+        } else {
+            return false;
+        }
+        return true;
+    }
 
     bool
     block ( BasicBlock &B )
     {
         state_e &seen = Seen[&B];
-        outs() << Action << ": " << B << seen <<endll;
+        if (Pass->verbose) outs() << Action << ": " << B << seen <<endll;
         if (seen == Unvisited) {
             seen = Stacked;
             Stack.push_back (&B);
@@ -220,7 +235,7 @@ struct Liptonize : public LiptonPass::Processor {
     {
         int &seen = Seen[&B];
         if (seen == 0) {
-            outs() << (Area==RightArea?"R ":"L ")<< B << "\n";
+            if (Pass->verbose) outs() << (Area==RightArea?"R ":"L ")<< B << "\n";
             if (Pass->isYieldCall(B.getFirstNonPHI())) {
                 // safe to enter B as left area now
                 Stack.push_back ( StackElem(LeftArea, &B) );
@@ -260,11 +275,26 @@ struct Liptonize : public LiptonPass::Processor {
         Area = RightArea;
     }
 
-    void
-    yield (Instruction *I)
+    bool
+    yield (CallInst *call)
     {
-        outs () << "Yield "<< *I <<"\n";
-        Area = RightArea;
+        if (call->getCalledFunction ()->getName ().endswith(PTHREAD_YIELD)) {
+            if (Pass->verbose) outs () << "Yield "<< *call <<"\n";
+            Area = RightArea;
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_LOCK)) {
+            doHandle (call, RightMover);
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_UNLOCK)) {
+            doHandle (call, LeftMover);
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_CREATE)) {
+            doHandle (call, LeftMover);
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_JOIN)) {
+            doHandle (call, RightMover);
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_MUTEX_INIT)) {
+
+        } else {
+            return false;
+        }
+        return true;
     }
 
     Instruction *
@@ -273,13 +303,21 @@ struct Liptonize : public LiptonPass::Processor {
         assert (!Pass->isYieldCall(I));
         mover_e m = Pass->movable (I);
 
-        outs () << (Area==RightArea?"R ":"L ") << *I << " -> \t"<< name(m) <<"\n";
-        Instruction *Ret = I;
+        return doHandle (I, m);
+    }
+
+private:
+    Instruction* doHandle (Instruction* I, mover_e m)
+    {
+        //if (Pass->verbose)
+        outs () << (Area == RightArea ? "R " : "L ") << *I << " -> \t"
+                << name (m) << "\n";
+        Instruction* Ret = I;
         switch (m) {
         case RightMover:
             if (Area == LeftArea) {
                 Area = RightArea;
-                assert (!I->isTerminator());
+                assert(!I->isTerminator ());
                 Pass->insertYield (I, YIELD_AFTER);
                 Ret = I->getNextNode ();
             }
@@ -289,16 +327,17 @@ struct Liptonize : public LiptonPass::Processor {
             break;
         case NoneMover:
             if (Area == LeftArea) {
-                assert (!I->isTerminator());
+                assert(!I->isTerminator ());
                 Pass->insertYield (I, YIELD_AFTER);
                 Ret = I->getNextNode ();
             } else {
                 Area = LeftArea;
             }
             break;
-        case BothMover: break;
+        case BothMover:
+            break;
         default:
-            ASSERT (false, "Missing case.");
+            ASSERT(false, "Missing case.");
         }
         return Ret;
     }
@@ -323,9 +362,7 @@ LiptonPass::walkGraph ( Instruction *I )
         DenseMap<Instruction *, Function *> callRecords = Reach->callRecords;
         if (callRecords.find (call) != callRecords.end ()) {
             walkGraph (*callRecords[call]);
-        } else if (call->getCalledFunction ()->getName () == PTHREAD_YIELD) {
-            handle->yield (I);
-        } else {
+        } else if (!handle->yield (call)) {
             outs() << "Handle library call: "<<
                     call->getCalledFunction()->getName() <<"\n";
         }
@@ -349,7 +386,7 @@ LiptonPass::walkGraph ( BasicBlock &B )
 void
 LiptonPass::walkGraph ( Function &F )
 {
-    outs() << F.getName() << "\n";
+    if (verbose) outs() << F.getName() << "\n";
     walkGraph (F.getEntryBlock());
 }
 
@@ -378,7 +415,7 @@ LiptonPass::runOnModule (Module &M)
     walkGraph<Collect> ();
     walkGraph<Liptonize> ();
 
-    outs() << dynamic_cast<Pass*>(AA)->getPassName() << endll;
+    //outs() << dynamic_cast<Pass*>(AA)->getPassName() << endll;
 
     return true;
 }
