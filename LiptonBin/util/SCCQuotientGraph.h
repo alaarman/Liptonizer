@@ -86,6 +86,9 @@ public:
     void        link (T *x, T *y);
     void        link (T *x, SCCI<T> *y);
     void        print();
+
+    bool        stCon (SCCI<T>  *S, SCCI<T>  *TT);
+    bool        stCon (T *S, T *TT);
 };
 
 }

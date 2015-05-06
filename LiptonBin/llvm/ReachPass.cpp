@@ -281,6 +281,12 @@ ReachPass::checkNode (CallGraphNode* const node, CallGraphSCC& SCC)
     }
 }
 
+bool
+ReachPass::stCon (Instruction *S, Instruction *T)
+{
+    return instrQuotient.stCon(S, T);
+}
+
 void
 ReachPass::printNode (CallGraphNode* const node, CallGraphSCC& SCC)
 {

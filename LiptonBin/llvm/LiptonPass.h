@@ -8,6 +8,8 @@
 #ifndef LIPTONBIN_LLVM_LIPTONPASS_H_
 #define LIPTONBIN_LLVM_LIPTONPASS_H_
 
+#include <list>
+#include <string>
 #include <vector>
 
 #include "llvm/ReachPass.h"
@@ -18,6 +20,7 @@
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/DenseSet.h>
 
 
 using namespace llvm;
@@ -39,11 +42,13 @@ enum mover_e {
 class LiptonPass : public ModulePass {
 
 public:
-    static char ID;
-    string Name;
+    static char         ID;
+    string              Name;
+    bool                verbose;
+    int                 Block = 1;
 
     LiptonPass();
-    LiptonPass(ReachPass &RP, string name);
+    LiptonPass(ReachPass &RP, string name, bool v);
 
     struct Processor {
         LiptonPass                 *Pass;
@@ -52,17 +57,22 @@ public:
         virtual ~Processor() {}
         virtual Instruction *process (Instruction *I)
                                      { return nullptr; }
-        virtual void yield (Instruction *I) { }
+        virtual bool yield (CallInst *call) { return false; }
         virtual void thread (Function *F) {}
         virtual bool block (BasicBlock &B) { return false; }
         virtual void deblock (BasicBlock &B) {  }
     };
 
 
-    DenseMap<Function *, AliasSetTracker *> ThreadAliases;
-    Function                       *Yield;
-    AliasAnalysis                  *AA;
-    ReachPass                      *Reach;
+    DenseMap<AliasSet *, list<Instruction *>>   AS2I;
+    DenseMap<Instruction *, pair<mover_e, int>> Movers;
+    DenseMap<Function *, AliasSetTracker *>     ThreadAliases;
+    DenseMap<Function *, vector<Instruction *>> Instructions;
+    Function                       *Yield = nullptr;
+    Function                       *Act = nullptr;
+    AliasAnalysis                  *AA = nullptr;
+    ReachPass                      *Reach = nullptr;
+    GlobalVariable                 *Phase = nullptr;
 
     bool isYieldCall (Instruction *I);
     void insertYield (Instruction *I, yield_loc_e loc);
@@ -71,6 +81,7 @@ public:
 private:
     Processor                      *handle = nullptr;
 
+    void doYield (Instruction *I, int b);
     // getAnalysisUsage - This pass requires the CallGraph.
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
     bool runOnModule (Module &M);

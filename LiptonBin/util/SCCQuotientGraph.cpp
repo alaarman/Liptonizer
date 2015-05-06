@@ -4,6 +4,7 @@
 
 #include "util/SCCQuotientGraph.h"
 #include "util/Util.h"
+#include "llvm/Util.h"
 
 using namespace std;
 using namespace llvm;
@@ -47,6 +48,23 @@ SCCQuotientGraph<T>::link (T *x, SCCI<T> *y)
 {
     SCCI<T> *xscc = blockMap[x];
     link(xscc, y);
+}
+
+template<class T>
+bool
+SCCQuotientGraph<T>::stCon (SCCI<T>  *S, SCCI<T>  *TT)
+{
+    assert (S && TT);
+    return reach.get(S->index, TT->index);
+}
+
+template<class T>
+bool
+SCCQuotientGraph<T>::stCon (T *S, T *TT)
+{
+    if (!blockMap[S])     outs () << "S " << *S << endll;
+    if (!blockMap[TT])    outs () << "T " << *TT << endll;
+    return stCon(blockMap[S], blockMap[TT]);
 }
 
 template<class T>
