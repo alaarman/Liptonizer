@@ -27,6 +27,11 @@ using namespace llvm;
 
 namespace VVT {
 
+enum block_e {
+    Static = 0,
+    Dynamic,
+};
+
 enum yield_loc_e {
     YIELD_BEFORE,
     YIELD_AFTER
@@ -65,9 +70,8 @@ public:
 
 
     DenseMap<AliasSet *, list<Instruction *>>   AS2I;
-    DenseMap<Instruction *, pair<mover_e, int>> Movers;
+    DenseMap<Instruction *, pair<block_e, int>> BlockStarts;
     DenseMap<Function *, AliasSetTracker *>     ThreadAliases;
-    DenseMap<Function *, vector<Instruction *>> Instructions;
     Function                       *Yield = nullptr;
     Function                       *Act = nullptr;
     AliasAnalysis                  *AA = nullptr;
@@ -81,7 +85,8 @@ public:
 private:
     Processor                      *handle = nullptr;
 
-    void doYield (Instruction *I, int b);
+    void dynamicYield (DenseMap<Function *, Instruction *> &Starts,
+                  Instruction *I, int b);
     // getAnalysisUsage - This pass requires the CallGraph.
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
     bool runOnModule (Module &M);
@@ -89,6 +94,9 @@ private:
     void walkGraph ( Instruction *I );
     void walkGraph ( BasicBlock &B );
     void walkGraph ( Function &F );
+    void conflictingNonMovers (SmallVector<Value*, 8> &sv,
+                               Instruction* I, DenseMap<Function*,
+                               Instruction*>& Starts);
     template <typename ProcessorT>
     void walkGraph ();
 };

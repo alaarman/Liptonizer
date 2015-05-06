@@ -110,6 +110,9 @@ LiptonPass::insertYield (Instruction *I, yield_loc_e loc)
 
     Value *num = ConstantInt::get(Yield->getFunctionType()->getParamType(0), Block++);
     CallInst::Create(Yield, num, "", I);
+
+    // forced block (left to right) or loop, always static:
+    BlockStarts[I] = make_pair (Static, Block);
 }
 
 mover_e
@@ -123,7 +126,7 @@ LiptonPass::movable(Instruction *I)
 
         for (AliasSet &s : *X.second) {
             if (s.aliasesUnknownInst(I, *AA)) return NoneMover;
-        } // TODO: locks
+        }
     }
     return BothMover;
 }
@@ -132,11 +135,11 @@ LiptonPass::movable(Instruction *I)
 static AliasSet *
 FindAliasSetForUnknownInst(AliasSetTracker *AST, Instruction *Inst)
 {
-  for (AliasSet &AS : *AST) {
-    if (AS.aliasesUnknownInst(Inst, AST->getAliasAnalysis()))
-     return &AS;
-  }
-  return nullptr;
+    for (AliasSet &AS : *AST) {
+        if (AS.aliasesUnknownInst(Inst, AST->getAliasAnalysis()))
+            return &AS;
+    }
+    return nullptr;
 }
 
 /**
@@ -210,14 +213,16 @@ struct Collect : public LiptonPass::Processor {
     Instruction *
     process (Instruction *I)
     {
-        Pass->Instructions[ThreadF].push_back(I);
         AliasSetTracker *AST = Pass->ThreadAliases[ThreadF];
         if (AST == nullptr)
             AST = Pass->ThreadAliases[ThreadF] = new AliasSetTracker (*Pass->AA);
-        AST->add (I);
 
-        AliasSet *AS = FindAliasSetForUnknownInst (AST, I);
-        Pass->AS2I[AS].push_back(I);
+        bool harmless = AST->add (I);
+
+        if (!harmless) {
+            AliasSet *AS = FindAliasSetForUnknownInst (AST, I);
+            Pass->AS2I[AS].push_back(I);
+        }
         return I;
     }
 };
@@ -273,17 +278,6 @@ struct Liptonize : public LiptonPass::Processor {
             }
             seen = --StackDepth;
             return true;
-        } else if (seen < 0) {
-        } else if (seen == RightArea) {
-            if (false && Area == LeftArea) {  // TODO: Can be removed now that things are dynamic
-                Instruction* firstNonPhi = B.getFirstNonPHI ();
-                LLASSERT (firstNonPhi, "No Instruction in " << B);
-                Pass->insertYield (firstNonPhi, YIELD_BEFORE);
-                // safe to enter B as left area now
-                seen = LeftArea;
-            }
-        } else {
-            assert (seen == LeftArea);
         }
         return false;
     }
@@ -332,14 +326,13 @@ struct Liptonize : public LiptonPass::Processor {
     {
         assert (!Pass->isYieldCall(I));
         mover_e m = Pass->movable (I);
-
         return doHandle (I, m);
     }
 
 private:
     Instruction* doHandle (Instruction* I, mover_e m)
     {
-        //if (Pass->verbose)
+        if (Pass->verbose)
         outs () << (Area == RightArea ? "R " : "L ") << *I << " -> \t"
                 << name (m) << "\n";
         Instruction* Ret = I;
@@ -350,7 +343,6 @@ private:
                 Area = RightArea;
                 assert(!I->isTerminator ());
                 Pass->insertYield (I, YIELD_BEFORE);
-                //Pass->YieldBefore.insert(I);
             }
             break;
         case LeftMover:
@@ -359,11 +351,7 @@ private:
         case NoneMover:
             if (Area == LeftArea) {
                 assert(!I->isTerminator ());
-                //Pass->insertYield (I, YIELD_AFTER);
-                //Ret = I->getNextNode ();
-                outs () << *I << "  $$$$$$$$$$$$$$$$$  " << Pass->Block << endll;
-                Pass->Movers[I] = make_pair(m, Pass->Block++);
-                //Pass->YieldBefore.insert(I);
+                Pass->BlockStarts[I] = make_pair (Dynamic, Pass->Block++);
             } else {
                 Area = LeftArea;
             }
@@ -438,37 +426,51 @@ LiptonPass::walkGraph ()
 }
 
 void
-LiptonPass::doYield (Instruction *I, int block)
+LiptonPass::conflictingNonMovers (SmallVector<Value*, 8> &sv,
+                                  Instruction* I, DenseMap<Function*,
+                                  Instruction*>& Starts)
 {
-    //ReachPass *Reach = cast<ReachPass>(&getAnalysis<ReachPass> ());
-
-    SmallVector<Value*, 8> sv;
-
+    // First collect conflicting non-movers from other threads
     Type* Ptr = Act->getFunctionType ()->getParamType (0);
-    Function *F = I->getParent ()->getParent ();
+    Function* F = I->getParent ()->getParent ();
     unsigned TCount = Reach->Threads[F].size ();
-    for (pair<Function *, AliasSetTracker *> &X : ThreadAliases) {
+    // for all other threads
+    for (pair<Function*, AliasSetTracker*>& X : ThreadAliases) {
         Function* G = X.first;
         if (G == F && TCount == 1)
             continue;
 
-        Constant *FP = ConstantExpr::getBitCast (G, Ptr);
-        sv.push_back(FP);
-        AliasSet *AS = FindAliasSetForUnknownInst (X.second, I);
-        if (AS == nullptr) continue;
+        Instruction* si0 = Starts[G];
+        Constant* FP = ConstantExpr::getBitCast (G, Ptr);
+        sv.push_back (FP);
+        AliasSet* AS = FindAliasSetForUnknownInst (X.second, I);
+        if (AS == nullptr)
+            continue;
 
-        for (Instruction *J : AS2I[AS]) {
-            if (J == I) continue;
-
-            for (Instruction *R : Instructions[G]) {
-                if (Reach->stCon(R, J)) {
-                    int b = Movers[R].second;
-                    Value *num = Constant::getIntegerValue (Ptr, APInt(64, b));
-                    sv.push_back(num);
+        // for all conflicting J
+        for (Instruction* J : AS2I[AS]) {
+            // for all Block starting points TODO: refine to exit points
+            for (pair<Instruction*, pair<block_e, int> > X : BlockStarts) {
+                Instruction* R = X.first;
+                // if Block is in same process as J, and block can reach J
+                if (Reach->stCon (si0, R) && Reach->stCon (R, J)) {
+                    // add block index to __act
+                    int b = BlockStarts[R].second;
+                    Value* num = Constant::getIntegerValue (Ptr, APInt (64, b));
+                    sv.push_back (num);
                 }
             }
         }
     }
+}
+
+void
+LiptonPass::dynamicYield (DenseMap<Function *, Instruction *> &Starts,
+                          Instruction *I, int block)
+{
+    // First collect conflicting non-movers from other threads
+    SmallVector<Value*, 8> sv;
+    conflictingNonMovers (sv, I, Starts);
 
     // if in postcommit (!phase) and dynamic conflict
     LoadInst *P = new LoadInst(Phase, "", I);
@@ -497,36 +499,49 @@ LiptonPass::runOnModule (Module &M)
 {
     AA = &getAnalysis<AliasAnalysis> ();
 
+    // Add '__act' and '__yield' functions
     Type *Int = Type::getInt32Ty(M.getContext());
-
     Type *Void = FunctionType::getVoidTy (M.getContext());
     Constant *C = M.getOrInsertFunction (__YIELD, Void, Int, (Type *) 0);
     Yield = cast<Function> (C);
-    //Yield->dump();
-
     Type *Bool = Type::getInt1Ty (M.getContext());
     Type *Ptr = Type::getInt64PtrTy(M.getContext(), 0);
     Constant *C2 = M.getOrInsertFunction (__ACT, FunctionType::get(Bool, Ptr, true));
     Act = cast<Function> (C2);
 
+    // Add 'phase' thread-local variable
     Phase = (GlobalVariable *) M.getOrInsertGlobal("__phase", Bool);
-    //Cond = (GlobalVariable *) M.getOrInsertGlobal("__cond", Bool);
     Phase->setThreadLocal(true);
-    //Cond->setThreadLocal(true);
     PRECOMMIT = ConstantInt::get(Bool, 1);
     Phase->setInitializer(PRECOMMIT);
 
+    // Collect thread reachability info and break loops with static yields
     walkGraph<Collect> ();
-    walkGraph<Liptonize> (); // number static blocks
 
-    for (pair<Instruction *, pair<mover_e, int>> X : Movers) {
-        doYield(X.first, X.second.second);
+    // Identify and number blocks statically
+    // (assuming all dynamic non-movers are static non-movers)
+    walkGraph<Liptonize> ();
+
+    // collect thread initial instructions (before instrumenting threads)
+    DenseMap<Function *, Instruction *>     Starts;
+    for (pair<Function *, AliasSetTracker *>  X : ThreadAliases) {
+        Starts[X.first] = X.first->getEntryBlock().getFirstNonPHI();
     }
 
-    //outs() << dynamic_cast<Pass*>(AA)->getPassName() << endll;
+    // instrument code with dynamic yields
+    for (pair<Instruction *, pair<block_e, int>> X : BlockStarts) {
+
+        // only non-movers can be dynamic
+        if (X.second.first != Dynamic) continue;
+
+        Instruction *I  = X.first;
+//        outs () << I << endll;
+//        outs () << *I << endll;
+        dynamicYield (Starts, I, X.second.second);
+    }
 
     return true;
 }
 
-} // VVT
+} // LiptonPass
 

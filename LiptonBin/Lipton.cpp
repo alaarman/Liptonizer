@@ -54,9 +54,9 @@ struct X : PassRegistrationListener {
 int
 main( int argc, const char* argv[] )
 {
-    ASSERT (argc == 2, "Require an argument. Pass a .ll or .bc file (argc = "<< argc <<").\n");
+    ASSERT (argc >= 2, "Require an argument. Pass a .ll or .bc file (argc = "<< argc <<").\n");
 
-    string ll(argv[1]);
+    string ll(argv[argc - 1]);
     Module *M;
     LLVMContext &context = getGlobalContext();
     if (ends_with(ll, ".bc")) {
@@ -84,6 +84,13 @@ main( int argc, const char* argv[] )
         exit(1);
     }
 
+    bool verbose = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-v") == 0) {
+            verbose = true;
+        }
+    }
+
     Function *main = M->getFunction("main");
     ASSERT (main, "No 'main' function. Library?\n");
 
@@ -106,11 +113,11 @@ main( int argc, const char* argv[] )
 
     //Pass *aa1 = createAAEvalPass();
     //Pass *aa2 = createBasicAliasAnalysisPass();
-    Pass *aa3 = createTypeBasedAliasAnalysisPass();
-    Pass *aa4 = createObjCARCAliasAnalysisPass();
-    Pass *aa5 = createGlobalsModRefPass();
-    Pass *aac = createAliasAnalysisCounterPass();
-    Pass *ba = createBasicAliasAnalysisPass();
+    //Pass *aa3 = createTypeBasedAliasAnalysisPass();
+    //Pass *aa4 = createObjCARCAliasAnalysisPass();
+    //Pass *aa5 = createGlobalsModRefPass();
+    //Pass *aac = createAliasAnalysisCounterPass();
+    //Pass *ba = createBasicAliasAnalysisPass();
     Pass *aae = createAAEvalPass();
     Pass *dlp = new DataLayoutPass(M);
     Pass *aaa = new AndersenAA();
@@ -118,27 +125,21 @@ main( int argc, const char* argv[] )
     ReachPass *reach = new ReachPass();
 
     string name(ll, 0 , ll.size() - 3);
-    LiptonPass *lipton = new LiptonPass(*reach, name, false);
+    LiptonPass *lipton = new LiptonPass(*reach, name, verbose);
 
     //pm.add (indvars);
     //pm.add (lur);
     pm.add (cfgpass);
     pm.add (reach);
     pm.add (dlp);
-    //pm.add (aa3);
-    //pm.add (aa1);
-    //pm.add (aa2);
-    //pm.add (aa3);
-    //pm.add (aa4);
-    //pm.add (aa5);
-    //pm.add (aac);
     pm.add (aaa);
-    pm.add (aae);
+    if (verbose)
+        pm.add (aae);
     pm.add (lipton);
 
     pm.run (*M);
 
-    reach->printClosure();
+    if (verbose) reach->printClosure();
 
     // verify
     verifyModule (*M, &errs());
@@ -162,5 +163,3 @@ main( int argc, const char* argv[] )
 
     WriteBitcodeToFile(M, file2);
 }
-
-
