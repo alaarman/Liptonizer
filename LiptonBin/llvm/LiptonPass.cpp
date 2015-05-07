@@ -167,6 +167,7 @@ struct Collect : public LiptonPass::Processor {
     bool
     yield (CallInst *call)
     {
+        Pass->I2T[call] = ThreadF;
         if (call->getCalledFunction ()->getName ().endswith(PTHREAD_YIELD)) {
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_LOCK)) {
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_UNLOCK)) {
@@ -176,7 +177,6 @@ struct Collect : public LiptonPass::Processor {
         } else {
             return false;
         }
-        Pass->I2T[call] = ThreadF;
         return true;
     }
 
