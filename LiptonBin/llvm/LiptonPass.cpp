@@ -67,14 +67,17 @@ LiptonPass::LiptonPass () : ModulePass(ID),
         Name ("out"),
         verbose(true),
         staticBlocks(false),
+        phase(false),
         Reach (nullptr)
 { }
 
-LiptonPass::LiptonPass (ReachPass &RP, string name, bool v, bool staticBlocks)
+LiptonPass::LiptonPass (ReachPass &RP, string name, bool v, bool staticBlocks,
+                        bool phase)
                                                             : ModulePass(ID),
         Name (name),
         verbose(v),
         staticBlocks(staticBlocks),
+        phase(phase),
         Reach (&RP)
 { }
 
@@ -560,7 +563,7 @@ LiptonPass::dynamicYield (DenseMap<Function *, Instruction *> &Starts,
     // if in postcommit (!phase) and dynamic conflict
     LoadInst *P = new LoadInst(Phase, "", I);
     Value *C;
-    if (sv.size() == 0) {
+    if (phase || sv.size() == 0) {
         C = ConstantInt::get(Act->getFunctionType()->getReturnType(), 1);
     } else {
         C = CallInst::Create(Act, sv, "", I);

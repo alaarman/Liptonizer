@@ -69,6 +69,7 @@ main( int argc, const char* argv[] )
     }
     M = mod.get();
 
+    bool phase = false;
     bool staticBlocks = false;
     bool verbose = false;
     for (int i = 1; i < argc; i++) {
@@ -78,7 +79,11 @@ main( int argc, const char* argv[] )
         if (strcmp(argv[i], "-s") == 0) {
             staticBlocks = true;
         }
+        if (strcmp(argv[i], "-p") == 0) {
+            phase = true;
+        }
     }
+    ASSERT ( !(phase && staticBlocks), "Select one of -p and -s.");
 
     Function *main = M->getFunction("main");
     ASSERT (main, "No 'main' function. Library?\n");
@@ -113,7 +118,8 @@ main( int argc, const char* argv[] )
     CallGraphWrapperPass *cfgpass = new CallGraphWrapperPass();
     ReachPass *reach = new ReachPass();
 
-    LiptonPass *lipton = new LiptonPass(*reach, "stdin", verbose, staticBlocks);
+    LiptonPass *lipton = new LiptonPass(*reach, "stdin", verbose, staticBlocks,
+                                        phase);
 
     //pm.add (indvars);
     //pm.add (lur);
