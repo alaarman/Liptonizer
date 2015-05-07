@@ -72,6 +72,7 @@ public:
     DenseMap<AliasSet *, list<Instruction *>>   AS2I;
     DenseMap<Instruction *, pair<block_e, int>> BlockStarts;
     DenseMap<Function *, AliasSetTracker *>     ThreadAliases;
+    DenseMap<Instruction *, Function *>         I2T;
     Function                       *Yield = nullptr;
     Function                       *Act = nullptr;
     AliasAnalysis                  *AA = nullptr;

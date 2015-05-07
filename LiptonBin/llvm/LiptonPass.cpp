@@ -108,11 +108,11 @@ LiptonPass::insertYield (Instruction *I, yield_loc_e loc)
         return;
     }
 
-    Value *num = ConstantInt::get(Yield->getFunctionType()->getParamType(0), Block++);
-    CallInst::Create(Yield, num, "", I);
-
     // forced block (left to right) or loop, always static:
     BlockStarts[I] = make_pair (Static, Block);
+
+    Value *num = ConstantInt::get(Yield->getFunctionType()->getParamType(0), Block++);
+    CallInst::Create(Yield, num, "", I);
 }
 
 mover_e
@@ -207,7 +207,7 @@ struct Collect : public LiptonPass::Processor {
     void
     thread (Function *F)
     {
-        Pass->Block = 1;
+        //Pass->Block = 1; // TODO: Restart numbering for each thread
         ThreadF = F;
         AST = new AliasSetTracker (*Pass->AA);
         Pass->ThreadAliases.insert(make_pair(ThreadF, AST));
@@ -221,8 +221,14 @@ struct Collect : public LiptonPass::Processor {
     Instruction *
     process (Instruction *I)
     {
-        bool harmless = AST->add (I);
-        outs() << *I << " +++++" << ThreadF->getName() << "++++ --> " << harmless << endll;
+        LLASSERT (Pass->I2T.find(I) == Pass->I2T.end(),
+                  "Instuction not allow twice in different threads: " << *I);
+
+        Pass->I2T[I] = ThreadF;
+
+ //       bool harmless =
+                AST->add (I);
+ //       outs() << *I << " +++++" << ThreadF->getName() << "++++ --> " << harmless << endll;
 
         //if (!harmless) {
             AliasSet *AS = FindAliasSetForUnknownInst (AST, I);
@@ -443,8 +449,8 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
                                   DenseMap<Function *, Instruction *> &Starts)
 {
     // First collect conflicting non-movers from other threads
-    Type* Ptr = Act->getFunctionType ()->getParamType (0);
-    Function* F = I->getParent ()->getParent ();
+    Type *Ptr = Act->getFunctionType ()->getParamType (0);
+    Function *F = I2T[I];
     unsigned TCount = Reach->Threads[F].size ();
     // for all other threads
     for (pair<Function *, AliasSetTracker *> &X : ThreadAliases) {
@@ -452,9 +458,9 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
         if (G == F && TCount == 1) // skip own thread function iff singleton
             continue;
 
-        outs() << F->getName() << "  <> "<< G->getName() <<endll;
+        //outs() << F->getName() << "  <> "<< G->getName() <<endll;
         // Add thread identifier first
-        Instruction* si0 = Starts[G];
+        //Instruction* si0 = Starts[G];
         Constant* FP = ConstantExpr::getBitCast (G, Ptr);
         sv.push_back (FP);
 
@@ -462,19 +468,31 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
         if (AS == nullptr)
             continue;
 
+        DenseSet<int> Blocks;
+
         // for all conflicting J
         for (Instruction *J : AS2I[AS]) {
-            outs() << *I << "  <------------> "<< *J <<endll;
+            //outs() << *I << "  <------------> "<< *J << endll;
 
             // for all Block starting points TODO: refine to exit points
             for (pair<Instruction *, pair<block_e, int> > X : BlockStarts) {
                 Instruction* R = X.first;
+                if (I2T[R] != G) continue;
+                //outs () << *R  << " ---?---> " << *J;
+
                 // if Block is in same process as J, and block can reach J
-                if (Reach->stCon (si0, R) && Reach->stCon (R, J)) {
+                if (//Reach->stCon (si0, R) &&
+                     Reach->instructionMap[R] == Reach->instructionMap[J]  ||
+                     Reach->stCon (R, J)) {
+
                     // add block index to __act
-                    int b = BlockStarts[R].second;
+                    int b = X.second.second;
                     Value* num = Constant::getIntegerValue (Ptr, APInt(64, b));
-                    sv.push_back (num);
+                    if (Blocks.insert(b).second)
+                        sv.push_back (num);
+                    //outs () <<" yes" << endll;
+                } else {
+                    //outs () <<" no" << endll;
                 }
             }
         }
@@ -504,15 +522,15 @@ LiptonPass::dynamicYield (DenseMap<Function *, Instruction *> &Starts,
     LoadInst *P = new LoadInst(Phase, "", I);
     Value *C;
     if (sv.size() == 0) {
-        outs() << "Warning: non-mover without conflicts:\n"<< *I << endll;
-        outs() << endll;
+        //outs() << "Warning: non-mover without conflicts:\n"<< *I << endll;
+        //outs() << endll;
         C = ConstantInt::get(Act->getFunctionType()->getReturnType(), 1);
     } else {
-        outs() <<"--"<< endll;
-        for (Value *V : sv)
-            outs() << *V << endll;
-        outs() <<"--"<< endll;
-        outs() << endll;
+        //outs() <<"--"<< endll;
+        //for (Value *V : sv)
+        //    outs() << *V << endll;
+        //outs() <<"--"<< endll;
+        //outs() << endll;
         C = CallInst::Create(Act, sv, "", I);
     }
     Value *NP = BinaryOperator::CreateNot(P, "", I);
@@ -520,7 +538,7 @@ LiptonPass::dynamicYield (DenseMap<Function *, Instruction *> &Starts,
 
     // if in postcommit (!phase) and dynamic conflict, then yield
     TerminatorInst *term = SplitBlockAndInsertIfThen (IfCond, I, false, nullptr, nullptr);
-    Value *num = ConstantInt::get(Yield->getFunctionType()->getParamType(0), Block++);
+    Value *num = ConstantInt::get(Yield->getFunctionType()->getParamType(0), block);
     CallInst::Create(Yield, num, "", term);
 
     // Phase' := Phase XOR Conflict
@@ -561,7 +579,6 @@ LiptonPass::finalInstrument ()
     // instrument code with dynamic yields
     for (pair<Instruction *, pair<block_e, int>> X : BlockStarts) {
         Instruction *I = X.first;
-        outs () << *I << endll;
         dynamicYield (Starts, I, X.second.first, X.second.second);
     }
 }

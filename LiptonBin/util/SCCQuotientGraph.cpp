@@ -62,8 +62,6 @@ template<class T>
 bool
 SCCQuotientGraph<T>::stCon (T *S, T *TT)
 {
-    if (!blockMap[S])     outs () << "S " << *S << endll;
-    if (!blockMap[TT])    outs () << "T " << *TT << endll;
     return stCon(blockMap[S], blockMap[TT]);
 }
 
