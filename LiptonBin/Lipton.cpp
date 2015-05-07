@@ -54,35 +54,20 @@ struct X : PassRegistrationListener {
 int
 main( int argc, const char* argv[] )
 {
-    ASSERT (argc >= 2, "Require an argument. Pass a .ll or .bc file (argc = "<< argc <<").\n");
-
-    string ll(argv[argc - 1]);
     Module *M;
     LLVMContext &context = getGlobalContext();
-    if (ends_with(ll, ".bc")) {
-        ErrorOr<unique_ptr<MemoryBuffer>> buf_ptr_ptr = MemoryBuffer::getFileOrSTDIN(ll);
-        if (!buf_ptr_ptr) {
-            cout << "Failed reading " << ll << ". Error: "<<buf_ptr_ptr.getError() << endl;
-            return 1;
-        }
-        unique_ptr<MemoryBuffer> &bufptr = *buf_ptr_ptr;
-        ErrorOr<Module*> mod = parseBitcodeFile(bufptr.get(), context);
-        if (!mod) {
-            cout << argv[0] << mod.getError();
-            return 1;
-        }
-        M = mod.get();
-    } else if (ends_with(ll, ".ll")) {
-        SMDiagnostic err;
-        M = ParseIRFile(ll, err, context);
-        if (!M) {
-          err.print(argv[0], errs());
-          return 1;
-        }
-    } else {
-        cout << "Could not open file '"<< ll <<"'. Wrong extension.\n";
-        exit(1);
+    ErrorOr<unique_ptr<MemoryBuffer>> buf_ptr_ptr = MemoryBuffer::getSTDIN();
+    if (!buf_ptr_ptr) {
+      cerr << "Failed reading LLVM code. Error: "<<buf_ptr_ptr.getError() << endl;
+      return 1;
     }
+    unique_ptr<MemoryBuffer> &bufptr = *buf_ptr_ptr;
+    ErrorOr<Module*> mod = parseBitcodeFile(bufptr.get(), context);
+    if (!mod) {
+      cerr << argv[0] << mod.getError();
+      return 1;
+    }
+    M = mod.get();
 
     bool staticBlocks = false;
     bool verbose = false;
@@ -128,8 +113,7 @@ main( int argc, const char* argv[] )
     CallGraphWrapperPass *cfgpass = new CallGraphWrapperPass();
     ReachPass *reach = new ReachPass();
 
-    string name(ll, 0 , ll.size() - 3);
-    LiptonPass *lipton = new LiptonPass(*reach, name, verbose, staticBlocks);
+    LiptonPass *lipton = new LiptonPass(*reach, "stdin", verbose, staticBlocks);
 
     //pm.add (indvars);
     //pm.add (lur);
@@ -151,22 +135,6 @@ main( int argc, const char* argv[] )
     // verify
     verifyModule (*M, &errs());
 
-    size_t last = name.rfind('/');
-    // write out
-    string n(&name[last + 1]);
-    n.append("-lipton.ll");
-    const char* data = n.data ();
-    std::string error = string ("ERROR");
-    raw_fd_ostream file(data, error, sys::fs::OpenFlags::F_Text);
-
-    file << *M << "\n";
-
-    //errs() << dynamic_cast<Pass*>(&lipton->getAnalysis<AliasAnalysis> ())->getPassName() << endll;
-
-    string n2(&name[last + 1]);
-    n2.append("-lipton.bc");
-    const char* data2 = n2.data ();
-    raw_fd_ostream file2(data2, error, sys::fs::OpenFlags::F_RW);
-
-    WriteBitcodeToFile(M, file2);
+    WriteBitcodeToFile(M, outs());
+    outs().flush();
 }
