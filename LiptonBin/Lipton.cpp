@@ -84,10 +84,14 @@ main( int argc, const char* argv[] )
         exit(1);
     }
 
+    bool staticBlocks = false;
     bool verbose = false;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0) {
             verbose = true;
+        }
+        if (strcmp(argv[i], "-s") == 0) {
+            staticBlocks = true;
         }
     }
 
@@ -117,7 +121,7 @@ main( int argc, const char* argv[] )
     //Pass *aa4 = createObjCARCAliasAnalysisPass();
     //Pass *aa5 = createGlobalsModRefPass();
     //Pass *aac = createAliasAnalysisCounterPass();
-    //Pass *ba = createBasicAliasAnalysisPass();
+    Pass *ba = createBasicAliasAnalysisPass();
     Pass *aae = createAAEvalPass();
     Pass *dlp = new DataLayoutPass(M);
     Pass *aaa = new AndersenAA();
@@ -125,14 +129,17 @@ main( int argc, const char* argv[] )
     ReachPass *reach = new ReachPass();
 
     string name(ll, 0 , ll.size() - 3);
-    LiptonPass *lipton = new LiptonPass(*reach, name, verbose);
+    LiptonPass *lipton = new LiptonPass(*reach, name, verbose, staticBlocks);
 
     //pm.add (indvars);
     //pm.add (lur);
     pm.add (cfgpass);
     pm.add (reach);
     pm.add (dlp);
-    pm.add (aaa);
+    if (staticBlocks)
+        pm.add (ba);
+    else
+        pm.add (aaa);
     if (verbose)
         pm.add (aae);
     pm.add (lipton);

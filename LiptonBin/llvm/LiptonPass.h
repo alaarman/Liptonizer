@@ -50,10 +50,11 @@ public:
     static char         ID;
     string              Name;
     bool                verbose;
+    bool                staticBlocks;
     int                 Block = 1;
 
     LiptonPass();
-    LiptonPass(ReachPass &RP, string name, bool v);
+    LiptonPass(ReachPass &RP, string name, bool v, bool staticBlocks);
 
     struct Processor {
         LiptonPass                 *Pass;

@@ -63,12 +63,15 @@ static RegisterPass<LiptonPass> X("lipton", "Lipton reduction");
 LiptonPass::LiptonPass () : ModulePass(ID),
         Name ("out"),
         verbose(true),
+        staticBlocks(false),
         Reach (nullptr)
 { }
 
-LiptonPass::LiptonPass (ReachPass &RP, string name, bool v) : ModulePass(ID),
+LiptonPass::LiptonPass (ReachPass &RP, string name, bool v, bool staticBlocks)
+                                                            : ModulePass(ID),
         Name (name),
         verbose(v),
+        staticBlocks(staticBlocks),
         Reach (&RP)
 { }
 
@@ -514,17 +517,26 @@ void
 LiptonPass::dynamicYield (DenseMap<Function *, Instruction *> &Starts,
                           Instruction *I, block_e type, int block)
 {
+
+    if (staticBlocks) {
+        if (type == Dynamic) {
+            Value *num = ConstantInt::get(Yield->getFunctionType()->getParamType(0), block);
+            CallInst::Create(Yield, num, "", I);
+        }
+        return;
+    }
+
     Function *T = I2T[I];
     if (!T) outs() << *I << "\n" << *I->getParent() << endll;
     AllocaInst *Phase = Phases[T];
-
-//    outs () << T << "       "<<Phase  << " " << *I << endll;
 
     if (type == Static) {
         // set phase variable to true for static blocks
         new StoreInst(PRECOMMIT, Phase, I);
         return; // that's all
     }
+
+//    outs () << T << "       "<<Phase  << " " << *I << endll;
 
     // First collect conflicting non-movers from other threads
     SmallVector<Value*, 8> sv;
