@@ -630,7 +630,7 @@ LiptonPass::finalInstrument (Module &M)
         Function *T = X.first;
         Instruction *Start = T->getEntryBlock().getFirstNonPHI();
         AllocaInst *Phase = new AllocaInst (Bool, "__phase", Start);
-        //new StoreInst (PRECOMMIT, Phase, Start);
+        new StoreInst (PRECOMMIT, Phase, Start);
         Phases[T] = Phase;
         Starts[T] = Start;
     }
