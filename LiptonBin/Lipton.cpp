@@ -43,11 +43,11 @@ using namespace VVT;
 
 struct X : PassRegistrationListener {
     void passRegistered(const PassInfo *pi) {
-        cout << pi->getPassName()<< "R,"<< endl;
+        cerr << pi->getPassName()<< "R,"<< endl;
     }
 
     void passEnumerate(const PassInfo *pi) {
-        cout << pi->getPassName()<< ","<< endl;
+        cerr << pi->getPassName()<< ","<< endl;
     }
 };
 
@@ -161,7 +161,7 @@ main( int argc, const char* argv[] )
 
     file << *M << "\n";
 
-    //outs() << dynamic_cast<Pass*>(&lipton->getAnalysis<AliasAnalysis> ())->getPassName() << endll;
+    //errs() << dynamic_cast<Pass*>(&lipton->getAnalysis<AliasAnalysis> ())->getPassName() << endll;
 
     string n2(&name[last + 1]);
     n2.append("-lipton.bc");

@@ -186,7 +186,7 @@ struct Collect : public LiptonPass::Processor {
     block ( BasicBlock &B )
     {
         state_e &seen = Seen[&B];
-        if (Pass->verbose) outs() << Action << ": " << B << seen <<endll;
+        if (Pass->verbose) errs() << Action << ": " << B << seen <<endll;
         if (seen == Unvisited) {
             seen = Stacked;
             Stack.push_back (&B);
@@ -215,7 +215,7 @@ struct Collect : public LiptonPass::Processor {
         AST = new AliasSetTracker (*Pass->AA);
         Pass->ThreadAliases.insert(make_pair(ThreadF, AST));
 
-        //outs() << "*********************** "<< F->getName() << endll;
+        //errs() << "*********************** "<< F->getName() << endll;
         Seen.clear(); // restart with exploration
         Instruction *Start = F->getEntryBlock ().getFirstNonPHI ();
 
@@ -238,7 +238,7 @@ struct Collect : public LiptonPass::Processor {
 
  //       bool harmless =
                 AST->add (I);
- //       outs() << *I << " +++++" << ThreadF->getName() << "++++ --> " << harmless << endll;
+ //       errs() << *I << " +++++" << ThreadF->getName() << "++++ --> " << harmless << endll;
 
         //if (!harmless) {
             AliasSet *AS = FindAliasSetForUnknownInst (AST, I);
@@ -290,7 +290,7 @@ struct Liptonize : public LiptonPass::Processor {
     {
         int &seen = Seen[&B];
         if (seen == 0) {
-            if (Pass->verbose) outs() << (Area==RightArea?"R ":"L ")<< B << "\n";
+            if (Pass->verbose) errs() << (Area==RightArea?"R ":"L ")<< B << "\n";
             if (Pass->isYieldCall(B.getFirstNonPHI())) {
                 // safe to enter B as left area now
                 Stack.push_back ( StackElem(LeftArea, &B) );
@@ -407,8 +407,8 @@ LiptonPass::walkGraph ( Instruction *I )
         if (callRecords.find (call) != callRecords.end ()) {
             walkGraph (*callRecords[call]);
         } else if (!handle->yield (call)) {
-           outs() << "Handle library call: "<<
-                    call->getCalledFunction()->getName() <<"\n";
+           errs() << "Handle library call: "<<
+                     call->getCalledFunction()->getName() <<"\n";
         }
     } else {
         assert (!I->isTerminator());
@@ -430,7 +430,7 @@ LiptonPass::walkGraph ( BasicBlock &B )
 void
 LiptonPass::walkGraph ( Function &F )
 {
-    if (verbose) outs() << F.getName() << "\n";
+    if (verbose) errs() << F.getName() << "\n";
     walkGraph (F.getEntryBlock());
 }
 
@@ -467,7 +467,7 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
         if (G == F && TCount == 1) // skip own thread function iff singleton
             continue;
 
-        //outs() << F->getName() << "  <> "<< G->getName() <<endll;
+        //errs() << F->getName() << "  <> "<< G->getName() <<endll;
         // Add thread identifier first
         //Instruction* si0 = Starts[G];
         sv.push_back(G);
@@ -480,7 +480,7 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
 
         // for all conflicting J
         for (Instruction *J : AS2I[AS]) {
-            //outs() << *I << "  <------------> "<< *J << endll;
+            //errs() << *I << "  <------------> "<< *J << endll;
 
             // for all Block starting points TODO: refine to exit points
             for (pair<Instruction *, pair<block_e, int> > X : BlockStarts) {
@@ -526,7 +526,7 @@ LiptonPass::dynamicYield (DenseMap<Function *, Instruction *> &Starts,
     }
 
     Function *T = I2T[I];
-    if (!T) outs() << *I << "\n" << *I->getParent() << endll;
+    if (!T) errs() << *I << "\n" << *I->getParent() << endll;
     AllocaInst *Phase = Phases[T];
 
     if (type == Static) {
@@ -545,15 +545,15 @@ LiptonPass::dynamicYield (DenseMap<Function *, Instruction *> &Starts,
     LoadInst *P = new LoadInst(Phase, "", I);
     Value *C;
     if (sv.size() == 0) {
-        //outs() << "Warning: non-mover without conflicts:\n"<< *I << endll;
-        //outs() << endll;
+        //errs() << "Warning: non-mover without conflicts:\n"<< *I << endll;
+        //errs() << endll;
         C = ConstantInt::get(Act->getFunctionType()->getReturnType(), 1);
     } else {
-        //outs() <<"--"<< endll;
+        //errs() <<"--"<< endll;
         //for (Value *V : sv)
-        //    outs() << *V << endll;
-        //outs() <<"--"<< endll;
-        //outs() << endll;
+        //    errs() << *V << endll;
+        //errs() <<"--"<< endll;
+        //errs() << endll;
         C = CallInst::Create(Act, sv, "", I);
     }
     Value *NP = BinaryOperator::CreateNot(P, "", I);

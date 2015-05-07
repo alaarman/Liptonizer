@@ -103,7 +103,7 @@ template<class T>
 void
 SCCQuotientGraph<T>::print()
 {
-    reach.print(outs());
+    reach.print(errs());
 }
 
 } // namespace VVT

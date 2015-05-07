@@ -54,7 +54,7 @@ ReachPass::addInstruction (unsigned index, Instruction *I)
     pair<Instruction *, unsigned> p = make_pair (I, index);
     bool added = instructionMap.insert (p).second;
     if (!added) {
-        outs() << "Instruction added twice: " << *I <<"\n";
+        errs() << "Instruction added twice: " << *I <<"\n";
         assert(false);
     }
 }
@@ -113,7 +113,7 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
         Function *callee = rec.second->getFunction ();
         Instruction *callInstr = getInstr (rec);
         if (callee == nullptr) {
-            outs() << "XXXXXXXXXXXXXXXXXX" << callInstr;
+            errs() << "XXXXXXXXXXXXXXXXXX" << callInstr;
             continue;
         }
         if (callee->getName() == "pthread_create") {
