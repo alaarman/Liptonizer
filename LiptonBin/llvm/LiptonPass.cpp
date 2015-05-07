@@ -176,6 +176,7 @@ struct Collect : public LiptonPass::Processor {
         } else {
             return false;
         }
+        Pass->I2T[call] = ThreadF;
         return true;
     }
 
@@ -215,6 +216,13 @@ struct Collect : public LiptonPass::Processor {
         //outs() << "*********************** "<< F->getName() << endll;
         Seen.clear(); // restart with exploration
         Instruction *Start = F->getEntryBlock ().getFirstNonPHI ();
+
+        // Skip empty blocks, as we do not want terminators in BlockStarts
+        while (TerminatorInst *T = dyn_cast<TerminatorInst> (Start)) {
+            assert (T->getNumSuccessors() == 1);
+            Start = T->getSuccessor(0)->getFirstNonPHI();
+        }
+
         Pass->BlockStarts[Start] = make_pair (Static, 0); // TODO: unique?
     }
 
@@ -460,7 +468,7 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
         //outs() << F->getName() << "  <> "<< G->getName() <<endll;
         // Add thread identifier first
         //Instruction* si0 = Starts[G];
-	sv.push_back(G);
+        sv.push_back(G);
 
         AliasSet* AS = FindAliasSetForUnknownInst (X.second, I);
         if (AS == nullptr)
@@ -506,6 +514,12 @@ void
 LiptonPass::dynamicYield (DenseMap<Function *, Instruction *> &Starts,
                           Instruction *I, block_e type, int block)
 {
+    Function *T = I2T[I];
+    if (!T) outs() << *I << "\n" << *I->getParent() << endll;
+    AllocaInst *Phase = Phases[T];
+
+//    outs () << T << "       "<<Phase  << " " << *I << endll;
+
     if (type == Static) {
         // set phase variable to true for static blocks
         new StoreInst(PRECOMMIT, Phase, I);
@@ -556,27 +570,28 @@ LiptonPass::initialInstrument (Module &M)
     Constant* C2 = M.getOrInsertFunction (__ACT, FunctionType::get (Bool, true));
     Act = cast<Function> (C2);
     Int64 = Type::getInt64Ty(M.getContext());
-    // Add 'phase' thread-local variable
-    Phase = (GlobalVariable*)(M.getOrInsertGlobal ("__phase", Bool));
-    Phase->setThreadLocal (true);
-    PRECOMMIT = ConstantInt::get (Bool, 1);
-    Phase->setInitializer (PRECOMMIT);
 }
 
 void
-LiptonPass::finalInstrument ()
+LiptonPass::finalInstrument (Module &M)
 {
+    Type *Bool = Type::getInt1Ty (M.getContext());
+    PRECOMMIT = ConstantInt::get (Bool, 1);
+
     // collect thread initial instructions (before instrumenting threads)
-    DenseMap<Function*, Instruction*> Starts;
-    for (pair<Function*, AliasSetTracker*> X : ThreadAliases) {
-        Instruction *Start = X.first->getEntryBlock ().getFirstNonPHI ();
-        Starts[X.first] = Start;
+    DenseMap<Function *, Instruction *> Starts;
+    for (pair<Function *, AliasSetTracker *> X : ThreadAliases) {
+        Function *T = X.first;
+        Instruction *Start = T->getEntryBlock().getFirstNonPHI();
+        AllocaInst *Phase = new AllocaInst (Bool, "__phase", Start);
+        //new StoreInst (PRECOMMIT, Phase, Start);
+        Phases[T] = Phase;
+        Starts[T] = Start;
     }
 
     // instrument code with dynamic yields
     for (pair<Instruction *, pair<block_e, int>> X : BlockStarts) {
-        Instruction *I = X.first;
-        dynamicYield (Starts, I, X.second.first, X.second.second);
+        dynamicYield (Starts, X.first, X.second.first, X.second.second);
     }
 }
 
@@ -598,7 +613,7 @@ LiptonPass::runOnModule (Module &M)
     walkGraph<Liptonize> ();
 
     // Insert dynamic yields
-    finalInstrument ();
+    finalInstrument (M);
 
     return true; // modified module by inserting yields
 }

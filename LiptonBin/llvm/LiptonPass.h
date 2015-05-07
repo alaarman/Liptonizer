@@ -77,8 +77,9 @@ public:
     Function                       *Act = nullptr;
     AliasAnalysis                  *AA = nullptr;
     ReachPass                      *Reach = nullptr;
-    GlobalVariable                 *Phase = nullptr;
     Type                           *Int64 = nullptr;
+
+    DenseMap<Function *, AllocaInst *> Phases;
 
     bool isYieldCall (Instruction *I);
     void insertYield (Instruction *I, yield_loc_e loc);
@@ -100,7 +101,7 @@ private:
                                Instruction *I,
                                DenseMap<Function *, Instruction *> &Starts);
     void initialInstrument (Module &M);
-    void finalInstrument ();
+    void finalInstrument (Module &M);
     template <typename ProcessorT>
     void walkGraph ();
 };
