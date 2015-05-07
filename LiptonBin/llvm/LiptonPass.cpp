@@ -341,6 +341,7 @@ struct Liptonize : public LiptonPass::Processor {
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_UNLOCK)) {
             doHandle (call, LeftMover);
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_CREATE)) {
+            Pass->PTCreate.insert (call);
             doHandle (call, LeftMover);
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_JOIN)) {
             doHandle (call, RightMover);
@@ -373,7 +374,11 @@ private:
             if (Area == LeftArea) {
                 Area = RightArea;
                 assert(!I->isTerminator ());
-                Pass->insertYield (I, YIELD_BEFORE);
+                if (!ThreadF->getName().equals("main") ||
+                        Pass->PTCreate.size() != 0) {
+                    // avoid yield where there is no parallelism TODO: overestimation
+                    Pass->insertYield (I, YIELD_BEFORE);
+                }
             }
             break;
         case LeftMover:
@@ -382,10 +387,12 @@ private:
         case NoneMover:
             if (Area == LeftArea) {
                 assert(!I->isTerminator ());
-                Pass->BlockStarts[I] = make_pair (Dynamic, Pass->Block++);
             } else {
-                Pass->BlockStarts[I] = make_pair (Dynamic, Pass->Block++);
                 Area = LeftArea;
+            }
+            if (!ThreadF->getName().equals("main") ||
+                    Pass->PTCreate.size() != 0) {
+                Pass->BlockStarts[I] = make_pair (Dynamic, Pass->Block++);
             }
             break;
         case BothMover:

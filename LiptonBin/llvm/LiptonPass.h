@@ -72,6 +72,7 @@ public:
     };
 
 
+    DenseSet<Instruction *>                     PTCreate;
     DenseMap<AliasSet *, list<Instruction *>>   AS2I;
     DenseMap<Instruction *, pair<block_e, int>> BlockStarts;
     DenseMap<Function *, AliasSetTracker *>     ThreadAliases;
