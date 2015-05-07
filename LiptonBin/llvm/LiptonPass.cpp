@@ -357,7 +357,7 @@ private:
             }
             break;
         case LeftMover:
-            Area = Area == RightArea ? RightArea : LeftArea;
+            Area = LeftArea;
             break;
         case NoneMover:
             if (Area == LeftArea) {
