@@ -240,7 +240,7 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
         }
     }
 
-    return false;
+    return false; // no modification
 }
 
 static void printF (pair<Function *, std::vector<Instruction *>> &F) {
@@ -264,7 +264,7 @@ ReachPass::doFinalization(CallGraph &CG)
     Function *main = m.getFunction("main");
     ASSERT (main, "No main funciton in module");
     Threads[main].push_back((Instruction *)NULL);
-    return false;
+    return false; // no modification
 }
 
 void

@@ -159,6 +159,7 @@ struct Collect : public LiptonPass::Processor {
     static StringRef                Action;
     DenseMap<BasicBlock *, state_e> Seen;
     vector<BasicBlock *>            Stack;
+    AliasSetTracker                *AST;
 
     using Processor::Processor;
     ~Collect() { }
@@ -206,23 +207,27 @@ struct Collect : public LiptonPass::Processor {
     void
     thread (Function *F)
     {
+        Pass->Block = 1;
         ThreadF = F;
+        AST = new AliasSetTracker (*Pass->AA);
+        Pass->ThreadAliases.insert(make_pair(ThreadF, AST));
+
+        //outs() << "*********************** "<< F->getName() << endll;
         Seen.clear(); // restart with exploration
+        Instruction *Start = F->getEntryBlock ().getFirstNonPHI ();
+        Pass->BlockStarts[Start] = make_pair (Static, 0);
     }
 
     Instruction *
     process (Instruction *I)
     {
-        AliasSetTracker *AST = Pass->ThreadAliases[ThreadF];
-        if (AST == nullptr)
-            AST = Pass->ThreadAliases[ThreadF] = new AliasSetTracker (*Pass->AA);
-
         bool harmless = AST->add (I);
+        outs() << *I << " +++++" << ThreadF->getName() << "++++ --> " << harmless << endll;
 
-        if (!harmless) {
+        //if (!harmless) {
             AliasSet *AS = FindAliasSetForUnknownInst (AST, I);
             Pass->AS2I[AS].push_back(I);
-        }
+        //}
         return I;
     }
 };
@@ -296,7 +301,7 @@ struct Liptonize : public LiptonPass::Processor {
     {
         ThreadF = T;
         Area = RightArea;
-        Pass->Block = 1;
+        //Seen.clear();  // TODO: overlapping threads!
     }
 
     bool
@@ -353,6 +358,7 @@ private:
                 assert(!I->isTerminator ());
                 Pass->BlockStarts[I] = make_pair (Dynamic, Pass->Block++);
             } else {
+                Pass->BlockStarts[I] = make_pair (Dynamic, Pass->Block++);
                 Area = LeftArea;
             }
             break;
@@ -425,60 +431,88 @@ LiptonPass::walkGraph ()
     }
 }
 
+/**
+ * Fills the small vector with arguments for the '__pass' function call
+ * The following format is used: '__act(t_1, n_11,..., t2, n_21,....  )',
+ * where t_x is a function pointer to the thread's functions and
+ * { n_xy | y in N } is the set of conflicting blocks in that thread
+ */
 void
-LiptonPass::conflictingNonMovers (SmallVector<Value*, 8> &sv,
-                                  Instruction* I, DenseMap<Function*,
-                                  Instruction*>& Starts)
+LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
+                                  Instruction *I,
+                                  DenseMap<Function *, Instruction *> &Starts)
 {
     // First collect conflicting non-movers from other threads
     Type* Ptr = Act->getFunctionType ()->getParamType (0);
     Function* F = I->getParent ()->getParent ();
     unsigned TCount = Reach->Threads[F].size ();
     // for all other threads
-    for (pair<Function*, AliasSetTracker*>& X : ThreadAliases) {
-        Function* G = X.first;
-        if (G == F && TCount == 1)
+    for (pair<Function *, AliasSetTracker *> &X : ThreadAliases) {
+        Function *G = X.first;
+        if (G == F && TCount == 1) // skip own thread function iff singleton
             continue;
 
+        outs() << F->getName() << "  <> "<< G->getName() <<endll;
+        // Add thread identifier first
         Instruction* si0 = Starts[G];
         Constant* FP = ConstantExpr::getBitCast (G, Ptr);
         sv.push_back (FP);
+
         AliasSet* AS = FindAliasSetForUnknownInst (X.second, I);
         if (AS == nullptr)
             continue;
 
         // for all conflicting J
-        for (Instruction* J : AS2I[AS]) {
+        for (Instruction *J : AS2I[AS]) {
+            outs() << *I << "  <------------> "<< *J <<endll;
+
             // for all Block starting points TODO: refine to exit points
-            for (pair<Instruction*, pair<block_e, int> > X : BlockStarts) {
+            for (pair<Instruction *, pair<block_e, int> > X : BlockStarts) {
                 Instruction* R = X.first;
                 // if Block is in same process as J, and block can reach J
                 if (Reach->stCon (si0, R) && Reach->stCon (R, J)) {
                     // add block index to __act
                     int b = BlockStarts[R].second;
-                    Value* num = Constant::getIntegerValue (Ptr, APInt (64, b));
+                    Value* num = Constant::getIntegerValue (Ptr, APInt(64, b));
                     sv.push_back (num);
                 }
             }
+        }
+
+        // drop thread if it has no conflicting transitions
+        if (sv.back() == FP) {
+            sv.pop_back();
         }
     }
 }
 
 void
 LiptonPass::dynamicYield (DenseMap<Function *, Instruction *> &Starts,
-                          Instruction *I, int block)
+                          Instruction *I, block_e type, int block)
 {
+    if (type == Static) {
+        // set phase variable to true for static blocks
+        new StoreInst(PRECOMMIT, Phase, I);
+        return; // that's all
+    }
+
     // First collect conflicting non-movers from other threads
     SmallVector<Value*, 8> sv;
     conflictingNonMovers (sv, I, Starts);
 
     // if in postcommit (!phase) and dynamic conflict
     LoadInst *P = new LoadInst(Phase, "", I);
-    CallInst *C;
+    Value *C;
     if (sv.size() == 0) {
-        Constant *True = ConstantInt::get(Act->getFunctionType()->getParamType(0), 1);
-        C = CallInst::Create(Act, True, "", I);
+        outs() << "Warning: non-mover without conflicts:\n"<< *I << endll;
+        outs() << endll;
+        C = ConstantInt::get(Act->getFunctionType()->getReturnType(), 1);
     } else {
+        outs() <<"--"<< endll;
+        for (Value *V : sv)
+            outs() << *V << endll;
+        outs() <<"--"<< endll;
+        outs() << endll;
         C = CallInst::Create(Act, sv, "", I);
     }
     Value *NP = BinaryOperator::CreateNot(P, "", I);
@@ -494,53 +528,65 @@ LiptonPass::dynamicYield (DenseMap<Function *, Instruction *> &Starts,
     new StoreInst(PP, Phase, I);
 }
 
+void
+LiptonPass::initialInstrument (Module &M)
+{
+    // Add '__act' and '__yield' functions
+    Type* Int = Type::getInt32Ty (M.getContext ());
+    Type* Void = FunctionType::getVoidTy (M.getContext ());
+    Constant* C = M.getOrInsertFunction (__YIELD, Void, Int, (Type*)(0));
+    Yield = cast<Function> (C);
+    Type* Bool = Type::getInt1Ty (M.getContext ());
+    Type* Ptr = Type::getInt64PtrTy (M.getContext (), 0);
+    Constant* C2 = M.getOrInsertFunction (__ACT, FunctionType::get (Bool, Ptr, true));
+    Act = cast<Function> (C2);
+
+    // Add 'phase' thread-local variable
+    Phase = (GlobalVariable*)(M.getOrInsertGlobal ("__phase", Bool));
+    Phase->setThreadLocal (true);
+    PRECOMMIT = ConstantInt::get (Bool, 1);
+    Phase->setInitializer (PRECOMMIT);
+}
+
+void
+LiptonPass::finalInstrument ()
+{
+    // collect thread initial instructions (before instrumenting threads)
+    DenseMap<Function*, Instruction*> Starts;
+    for (pair<Function*, AliasSetTracker*> X : ThreadAliases) {
+        Instruction *Start = X.first->getEntryBlock ().getFirstNonPHI ();
+        Starts[X.first] = Start;
+    }
+
+    // instrument code with dynamic yields
+    for (pair<Instruction *, pair<block_e, int>> X : BlockStarts) {
+        Instruction *I = X.first;
+        outs () << *I << endll;
+        dynamicYield (Starts, I, X.second.first, X.second.second);
+    }
+}
+
 bool
 LiptonPass::runOnModule (Module &M)
 {
     AA = &getAnalysis<AliasAnalysis> ();
 
     // Add '__act' and '__yield' functions
-    Type *Int = Type::getInt32Ty(M.getContext());
-    Type *Void = FunctionType::getVoidTy (M.getContext());
-    Constant *C = M.getOrInsertFunction (__YIELD, Void, Int, (Type *) 0);
-    Yield = cast<Function> (C);
-    Type *Bool = Type::getInt1Ty (M.getContext());
-    Type *Ptr = Type::getInt64PtrTy(M.getContext(), 0);
-    Constant *C2 = M.getOrInsertFunction (__ACT, FunctionType::get(Bool, Ptr, true));
-    Act = cast<Function> (C2);
+    initialInstrument (M);
 
-    // Add 'phase' thread-local variable
-    Phase = (GlobalVariable *) M.getOrInsertGlobal("__phase", Bool);
-    Phase->setThreadLocal(true);
-    PRECOMMIT = ConstantInt::get(Bool, 1);
-    Phase->setInitializer(PRECOMMIT);
-
-    // Collect thread reachability info and break loops with static yields
+    // Collect thread reachability info +
+    // Collect movability info          +
+    // Break loops with static yields
     walkGraph<Collect> ();
 
     // Identify and number blocks statically
     // (assuming all dynamic non-movers are static non-movers)
     walkGraph<Liptonize> ();
 
-    // collect thread initial instructions (before instrumenting threads)
-    DenseMap<Function *, Instruction *>     Starts;
-    for (pair<Function *, AliasSetTracker *>  X : ThreadAliases) {
-        Starts[X.first] = X.first->getEntryBlock().getFirstNonPHI();
-    }
+    // Insert dynamic yields
+    finalInstrument ();
 
-    // instrument code with dynamic yields
-    for (pair<Instruction *, pair<block_e, int>> X : BlockStarts) {
-
-        // only non-movers can be dynamic
-        if (X.second.first != Dynamic) continue;
-
-        Instruction *I  = X.first;
-//        outs () << I << endll;
-//        outs () << *I << endll;
-        dynamicYield (Starts, I, X.second.second);
-    }
-
-    return true;
+    return true; // modified module by inserting yields
 }
 
 } // LiptonPass

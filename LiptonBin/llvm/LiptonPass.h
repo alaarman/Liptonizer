@@ -86,7 +86,7 @@ private:
     Processor                      *handle = nullptr;
 
     void dynamicYield (DenseMap<Function *, Instruction *> &Starts,
-                  Instruction *I, int b);
+                       Instruction *I, block_e type, int b);
     // getAnalysisUsage - This pass requires the CallGraph.
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
     bool runOnModule (Module &M);
@@ -95,8 +95,10 @@ private:
     void walkGraph ( BasicBlock &B );
     void walkGraph ( Function &F );
     void conflictingNonMovers (SmallVector<Value*, 8> &sv,
-                               Instruction* I, DenseMap<Function*,
-                               Instruction*>& Starts);
+                               Instruction *I,
+                               DenseMap<Function *, Instruction *> &Starts);
+    void initialInstrument (Module &M);
+    void finalInstrument ();
     template <typename ProcessorT>
     void walkGraph ();
 };
