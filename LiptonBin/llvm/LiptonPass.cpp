@@ -12,7 +12,7 @@
 #include <string>
 
 #include <llvm/Analysis/Passes.h>
-#include <llvm/BitCode/ReaderWriter.h>
+#include <llvm/Bitcode/ReaderWriter.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/BasicBlock.h>
@@ -449,7 +449,6 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
                                   DenseMap<Function *, Instruction *> &Starts)
 {
     // First collect conflicting non-movers from other threads
-    Type *Ptr = Act->getFunctionType ()->getParamType (0);
     Function *F = I2T[I];
     unsigned TCount = Reach->Threads[F].size ();
     // for all other threads
@@ -461,8 +460,7 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
         //outs() << F->getName() << "  <> "<< G->getName() <<endll;
         // Add thread identifier first
         //Instruction* si0 = Starts[G];
-        Constant* FP = ConstantExpr::getBitCast (G, Ptr);
-        sv.push_back (FP);
+	sv.push_back(G);
 
         AliasSet* AS = FindAliasSetForUnknownInst (X.second, I);
         if (AS == nullptr)
@@ -487,7 +485,7 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
 
                     // add block index to __act
                     int b = X.second.second;
-                    Value* num = Constant::getIntegerValue (Ptr, APInt(64, b));
+                    Value* num = Constant::getIntegerValue (Int64, APInt(64, b));
                     if (Blocks.insert(b).second)
                         sv.push_back (num);
                     //outs () <<" yes" << endll;
@@ -498,7 +496,7 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
         }
 
         // drop thread if it has no conflicting transitions
-        if (sv.back() == FP) {
+        if (sv.back() == G) {
             sv.pop_back();
         }
     }
@@ -555,10 +553,9 @@ LiptonPass::initialInstrument (Module &M)
     Constant* C = M.getOrInsertFunction (__YIELD, Void, Int, (Type*)(0));
     Yield = cast<Function> (C);
     Type* Bool = Type::getInt1Ty (M.getContext ());
-    Type* Ptr = Type::getInt64PtrTy (M.getContext (), 0);
-    Constant* C2 = M.getOrInsertFunction (__ACT, FunctionType::get (Bool, Ptr, true));
+    Constant* C2 = M.getOrInsertFunction (__ACT, FunctionType::get (Bool, true));
     Act = cast<Function> (C2);
-
+    Int64 = Type::getInt64Ty(M.getContext());
     // Add 'phase' thread-local variable
     Phase = (GlobalVariable*)(M.getOrInsertGlobal ("__phase", Bool));
     Phase->setThreadLocal (true);

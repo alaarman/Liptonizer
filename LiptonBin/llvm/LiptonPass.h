@@ -78,6 +78,7 @@ public:
     AliasAnalysis                  *AA = nullptr;
     ReachPass                      *Reach = nullptr;
     GlobalVariable                 *Phase = nullptr;
+    Type                           *Int64 = nullptr;
 
     bool isYieldCall (Instruction *I);
     void insertYield (Instruction *I, yield_loc_e loc);
