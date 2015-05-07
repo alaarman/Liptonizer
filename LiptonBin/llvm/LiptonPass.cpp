@@ -82,7 +82,6 @@ void
 LiptonPass::getAnalysisUsage (AnalysisUsage &AU) const
 {
     AU.setPreservesCFG();
-//    AU.addRequired<ReachPass>();
     AU.addRequired<AliasAnalysis>();
     AU.addRequired<CallGraphWrapperPass>();
 }
@@ -222,7 +221,6 @@ struct Collect : public LiptonPass::Processor {
         AST = new AliasSetTracker (*Pass->AA);
         Pass->ThreadAliases.insert(make_pair(ThreadF, AST));
 
-        //errs() << "*********************** "<< F->getName() << endll;
         Seen.clear(); // restart with exploration
         Instruction *Start = F->getEntryBlock ().getFirstNonPHI ();
 
@@ -232,7 +230,7 @@ struct Collect : public LiptonPass::Processor {
             Start = T->getSuccessor(0)->getFirstNonPHI();
         }
 
-        Pass->BlockStarts[Start] = make_pair (Static, 0); // TODO: unique?
+        Pass->BlockStarts[Start] = make_pair (Static, 0);
     }
 
     Instruction *
@@ -243,14 +241,10 @@ struct Collect : public LiptonPass::Processor {
 
         Pass->I2T[I] = ThreadF;
 
- //       bool harmless =
-                AST->add (I);
- //       errs() << *I << " +++++" << ThreadF->getName() << "++++ --> " << harmless << endll;
+        AST->add (I);
 
-        //if (!harmless) {
-            AliasSet *AS = FindAliasSetForUnknownInst (AST, I);
-            Pass->AS2I[AS].push_back(I);
-        //}
+        AliasSet *AS = FindAliasSetForUnknownInst (AST, I);
+        Pass->AS2I[AS].push_back(I);
         return I;
     }
 };
@@ -463,7 +457,7 @@ LiptonPass::walkGraph ()
 static bool
 isAtomicIncDec (Instruction *I)
 {
-    if (AtomicRMWInst *A = dyn_cast_or_null<AtomicRMWInst>(I)) {
+    if (/*AtomicRMWInst *A = */dyn_cast_or_null<AtomicRMWInst>(I)) {
 //        switch (A->getOperation()) {
 //        case AtomicRMWInst::BinOp::Add;
 //        case AtomicRMWInst::BinOp::Sub;
@@ -500,9 +494,6 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
         if (G == F && TCount == 1) // skip own thread function iff singleton
             continue;
 
-        //errs() << F->getName() << "  <> "<< G->getName() <<endll;
-        // Add thread identifier first
-        //Instruction* si0 = Starts[G];
         sv.push_back(G);
 
         AliasSet* AS = FindAliasSetForUnknownInst (X.second, I);
@@ -510,32 +501,24 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
             continue;
 
         DenseSet<int> Blocks;
-
         // for all conflicting J
         for (Instruction *J : AS2I[AS]) {
-            //errs() << *I << "  <------------> "<< *J << endll;
-
             if (isAtomicIncDec(I) && isAtomicIncDec(J)) continue;
 
             // for all Block starting points TODO: refine to exit points
             for (pair<Instruction *, pair<block_e, int> > X : BlockStarts) {
                 Instruction* R = X.first;
                 if (I2T[R] != G) continue;
-                //outs () << *R  << " ---?---> " << *J;
 
                 // if Block is in same process as J, and block can reach J
-                if (//Reach->stCon (si0, R) &&
-                     Reach->instructionMap[R] == Reach->instructionMap[J]  ||
-                     Reach->stCon (R, J)) {
+                if (Reach->instructionMap[R] == Reach->instructionMap[J]  ||
+                                Reach->stCon (R, J)) {
 
                     // add block index to __act
                     int b = X.second.second;
                     Value* num = Constant::getIntegerValue (Int64, APInt(64, b));
                     if (Blocks.insert(b).second)
                         sv.push_back (num);
-                    //outs () <<" yes" << endll;
-                } else {
-                    //outs () <<" no" << endll;
                 }
             }
         }
@@ -570,8 +553,6 @@ LiptonPass::dynamicYield (DenseMap<Function *, Instruction *> &Starts,
         return; // that's all
     }
 
-//    outs () << T << "       "<<Phase  << " " << *I << endll;
-
     // First collect conflicting non-movers from other threads
     SmallVector<Value*, 8> sv;
     conflictingNonMovers (sv, I, Starts);
@@ -580,15 +561,8 @@ LiptonPass::dynamicYield (DenseMap<Function *, Instruction *> &Starts,
     LoadInst *P = new LoadInst(Phase, "", I);
     Value *C;
     if (sv.size() == 0) {
-        //errs() << "Warning: non-mover without conflicts:\n"<< *I << endll;
-        //errs() << endll;
         C = ConstantInt::get(Act->getFunctionType()->getReturnType(), 1);
     } else {
-        //errs() <<"--"<< endll;
-        //for (Value *V : sv)
-        //    errs() << *V << endll;
-        //errs() <<"--"<< endll;
-        //errs() << endll;
         C = CallInst::Create(Act, sv, "", I);
     }
     Value *NP = BinaryOperator::CreateNot(P, "", I);
