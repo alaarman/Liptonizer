@@ -28,9 +28,8 @@
 #include <llvm/PassRegistry.h>
 #include <llvm/PassSupport.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
-#include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/Transforms/Utils/Local.h"
-#include "llvm/Transforms/Utils/ModuleUtils.h"
+#include <llvm/Transforms/Utils/Local.h>
+#include <llvm/Transforms/Utils/ModuleUtils.h>
 
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/SmallVector.h>
