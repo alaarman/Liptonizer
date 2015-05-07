@@ -215,7 +215,7 @@ struct Collect : public LiptonPass::Processor {
         //outs() << "*********************** "<< F->getName() << endll;
         Seen.clear(); // restart with exploration
         Instruction *Start = F->getEntryBlock ().getFirstNonPHI ();
-        Pass->BlockStarts[Start] = make_pair (Static, 0);
+        Pass->BlockStarts[Start] = make_pair (Static, 0); // TODO: unique?
     }
 
     Instruction *
@@ -585,7 +585,7 @@ LiptonPass::runOnModule (Module &M)
 {
     AA = &getAnalysis<AliasAnalysis> ();
 
-    // Add '__act' and '__yield' functions
+    // Add '__act' and '__yield' function definitions
     initialInstrument (M);
 
     // Collect thread reachability info +
