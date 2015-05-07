@@ -19,6 +19,8 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/InstIterator.h>
+#include <llvm/IR/Instruction.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
@@ -52,9 +54,11 @@ static const char* PTHREAD_YIELD    = "pthread_yield";
 static const char* PTHREAD_CREATE   = "pthread_create";
 static const char* PTHREAD_JOIN     = "pthread_join";
 static const char* PTHREAD_LOCK     = "pthread_mutex_lock";
+static const char* PTHREAD_RLOCK    = "pthread_rwlock_rdlock";
+static const char* PTHREAD_WLOCK    = "pthread_rwlock_wrlock";
+static const char* PTHREAD_RW_UNLOCK= "pthread_rwlock_unlock";
 static const char* PTHREAD_UNLOCK   = "pthread_mutex_unlock";
 static const char* PTHREAD_MUTEX_INIT = "pthread_mutex_init";
-
 
 char LiptonPass::ID = 0;
 static RegisterPass<LiptonPass> X("lipton", "Lipton reduction");
@@ -172,6 +176,9 @@ struct Collect : public LiptonPass::Processor {
         Pass->I2T[call] = ThreadF;
         if (call->getCalledFunction ()->getName ().endswith(PTHREAD_YIELD)) {
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_LOCK)) {
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_RLOCK)) {
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_WLOCK)) {
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_RW_UNLOCK)) {
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_UNLOCK)) {
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_CREATE)) {
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_JOIN)) {
@@ -328,6 +335,12 @@ struct Liptonize : public LiptonPass::Processor {
             Area = RightArea;
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_LOCK)) {
             doHandle (call, RightMover);
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_RLOCK)) {
+            doHandle (call, RightMover);
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_WLOCK)) {
+            doHandle (call, RightMover);
+        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_RW_UNLOCK)) {
+            doHandle (call, LeftMover);
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_UNLOCK)) {
             doHandle (call, LeftMover);
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_CREATE)) {
@@ -447,6 +460,26 @@ LiptonPass::walkGraph ()
     }
 }
 
+static bool
+isAtomicIncDec (Instruction *I)
+{
+    if (AtomicRMWInst *A = dyn_cast_or_null<AtomicRMWInst>(I)) {
+//        switch (A->getOperation()) {
+//        case AtomicRMWInst::BinOp::Add;
+//        case AtomicRMWInst::BinOp::Sub;
+//        case AtomicRMWInst::BinOp::And;
+//        case AtomicRMWInst::BinOp::Nand;
+//        case AtomicRMWInst::BinOp::Or;
+//        case AtomicRMWInst::BinOp::Xor;
+//            return true;
+//        default:
+//            return false;
+//        }
+        return true;
+    }
+    return false;
+}
+
 /**
  * Fills the small vector with arguments for the '__pass' function call
  * The following format is used: '__act(t_1, n_11,..., t2, n_21,....  )',
@@ -481,6 +514,8 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
         // for all conflicting J
         for (Instruction *J : AS2I[AS]) {
             //errs() << *I << "  <------------> "<< *J << endll;
+
+            if (isAtomicIncDec(I) && isAtomicIncDec(J)) continue;
 
             // for all Block starting points TODO: refine to exit points
             for (pair<Instruction *, pair<block_e, int> > X : BlockStarts) {
