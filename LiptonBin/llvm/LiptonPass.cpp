@@ -419,14 +419,20 @@ private:
     followBlock (Instruction **Next)
     {
         int m = NoneMover;
-        while (( *Next = (*Next)->getNextNode () )) {
-            if (CallInst *c2 = dyn_cast_or_null<CallInst> (*Next)) {
+        Instruction *N = *Next;
+        while (( N = N->getNextNode () )) {
+            if (TerminatorInst *term = dyn_cast_or_null<TerminatorInst> (N)) {
+                ASSERT (term->getNumSuccessors() == 1, "No branching supported in atomic blocks");
+                N = term->getSuccessor(0)->getFirstNonPHI();
+            }
+            if (CallInst *c2 = dyn_cast_or_null<CallInst> (N)) {
                 if (c2->getCalledFunction ()->getName ().endswith (ATOMIC_END)) {
+                    Next = &N;
                     return mover_e(m);
                 }
             }
             // movers are implicitly treated as lattice:
-            m |= (int)Pass->movable(*Next);
+            m |= (int)Pass->movable(N);
         }
         ASSERT (false, "No matching atomic_end found!");
     }
