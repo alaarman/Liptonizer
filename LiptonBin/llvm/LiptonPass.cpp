@@ -422,7 +422,13 @@ private:
         Instruction *N = *Next;
         while (( N = N->getNextNode () )) {
             if (TerminatorInst *term = dyn_cast_or_null<TerminatorInst> (N)) {
-                ASSERT (term->getNumSuccessors() == 1, "No branching supported in atomic blocks");
+                int num = term->getNumSuccessors();
+                if (num == 0) break;
+
+                for (int i = 1; i < num; i++) {
+                    N = term->getSuccessor(i)->getFirstNonPHI();
+                    m |= followBlock (&N);
+                }
                 N = term->getSuccessor(0)->getFirstNonPHI();
             }
             if (CallInst *c2 = dyn_cast_or_null<CallInst> (N)) {
