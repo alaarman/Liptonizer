@@ -38,10 +38,10 @@ enum yield_loc_e {
 };
 
 enum mover_e {
-    RightMover = 0,
-    NoneMover,
-    LeftMover,
-    BothMover,
+    NoneMover   = 0,
+    RightMover  = 1,
+    LeftMover   = 2,
+    BothMover   = 3,
 };
 
 class LiptonPass : public ModulePass {
@@ -65,7 +65,7 @@ public:
         virtual ~Processor() {}
         virtual Instruction *process (Instruction *I)
                                      { return nullptr; }
-        virtual bool yield (CallInst *call) { return false; }
+        virtual Instruction *handleCall (CallInst *call) { return nullptr; }
         virtual void thread (Function *F) {}
         virtual bool block (BasicBlock &B) { return false; }
         virtual void deblock (BasicBlock &B) {  }

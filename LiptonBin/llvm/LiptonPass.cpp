@@ -48,17 +48,19 @@ namespace VVT {
 
 static Constant *PRECOMMIT;
 
-static const char* __YIELD          = "__yield";
-static const char* __ACT            = "__act";
-static const char* PTHREAD_YIELD    = "pthread_yield";
-static const char* PTHREAD_CREATE   = "pthread_create";
-static const char* PTHREAD_JOIN     = "pthread_join";
-static const char* PTHREAD_LOCK     = "pthread_mutex_lock";
-static const char* PTHREAD_RLOCK    = "pthread_rwlock_rdlock";
-static const char* PTHREAD_WLOCK    = "pthread_rwlock_wrlock";
-static const char* PTHREAD_RW_UNLOCK= "pthread_rwlock_unlock";
-static const char* PTHREAD_UNLOCK   = "pthread_mutex_unlock";
-static const char* PTHREAD_MUTEX_INIT = "pthread_mutex_init";
+static const char *__YIELD          = "__yield";
+static const char *__ACT            = "__act";
+static const char *PTHREAD_YIELD    = "pthread_yield";
+static const char *PTHREAD_CREATE   = "pthread_create";
+static const char *PTHREAD_JOIN     = "pthread_join";
+static const char *PTHREAD_LOCK     = "pthread_mutex_lock";
+static const char *PTHREAD_RLOCK    = "pthread_rwlock_rdlock";
+static const char *PTHREAD_WLOCK    = "pthread_rwlock_wrlock";
+static const char *PTHREAD_RW_UNLOCK= "pthread_rwlock_unlock";
+static const char *PTHREAD_UNLOCK   = "pthread_mutex_unlock";
+static const char *PTHREAD_MUTEX_INIT = "pthread_mutex_init";
+static const char *ATOMIC_BEGIN     = "atomic_begin";
+static const char *ATOMIC_END       = "atomic_end";
 
 char LiptonPass::ID = 0;
 static RegisterPass<LiptonPass> X("lipton", "Lipton reduction");
@@ -172,8 +174,8 @@ struct Collect : public LiptonPass::Processor {
     using Processor::Processor;
     ~Collect() { }
 
-    bool
-    yield (CallInst *call)
+    Instruction *
+    handleCall (CallInst *call)
     {
         Pass->I2T[call] = ThreadF;
         if (call->getCalledFunction ()->getName ().endswith(PTHREAD_YIELD)) {
@@ -185,10 +187,12 @@ struct Collect : public LiptonPass::Processor {
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_CREATE)) {
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_JOIN)) {
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_MUTEX_INIT)) {
+        } else if (call->getCalledFunction ()->getName ().endswith(ATOMIC_BEGIN)) {
+        } else if (call->getCalledFunction ()->getName ().endswith(ATOMIC_END)) {
         } else {
-            return false;
+            return nullptr;
         }
-        return true;
+        return call;
     }
 
     bool
@@ -324,8 +328,8 @@ struct Liptonize : public LiptonPass::Processor {
         //Seen.clear();  // TODO: overlapping threads!
     }
 
-    bool
-    yield (CallInst *call)
+    Instruction *
+    handleCall (CallInst *call)
     {
         if (call->getCalledFunction ()->getName ().endswith(PTHREAD_YIELD)) {
             if (Pass->verbose) outs () << "Yield "<< *call <<"\n";
@@ -347,10 +351,18 @@ struct Liptonize : public LiptonPass::Processor {
             doHandle (call, RightMover);
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_MUTEX_INIT)) {
 
+        } else if (call->getCalledFunction ()->getName ().endswith(ATOMIC_BEGIN)) {
+            // merge statements in atomic block and only yield afterwards
+            Instruction *Next = call;
+            mover_e m = followBlock (&Next);
+            doHandle (Next, m);
+            return Next;
+        } else if (call->getCalledFunction ()->getName ().endswith(ATOMIC_END)) {
+
         } else {
-            return false;
+            return nullptr;
         }
-        return true;
+        return call;
     }
 
     Instruction *
@@ -362,12 +374,12 @@ struct Liptonize : public LiptonPass::Processor {
     }
 
 private:
-    Instruction* doHandle (Instruction* I, mover_e m)
+    Instruction* doHandle (Instruction *I, mover_e m)
     {
         if (Pass->verbose)
         outs () << (Area == RightArea ? "R " : "L ") << *I << " -> \t"
                 << name (m) << "\n";
-        Instruction* Ret = I;
+        Instruction *Ret = I;
 
         switch (m) {
         case RightMover:
@@ -402,6 +414,22 @@ private:
         }
         return Ret;
     }
+
+    mover_e
+    followBlock (Instruction **Next)
+    {
+        int m = NoneMover;
+        while (( *Next = (*Next)->getNextNode () )) {
+            if (CallInst *c2 = dyn_cast_or_null<CallInst> (*Next)) {
+                if (c2->getCalledFunction ()->getName ().endswith (ATOMIC_END)) {
+                    return mover_e(m);
+                }
+            }
+            // movers are implicitly treated as lattice:
+            m |= (int)Pass->movable(*Next);
+        }
+        ASSERT (false, "No matching atomic_end found!");
+    }
 };
 
 StringRef Collect::Action = "Collecting";
@@ -423,9 +451,13 @@ LiptonPass::walkGraph ( Instruction *I )
         DenseMap<Instruction *, Function *> callRecords = Reach->callRecords;
         if (callRecords.find (call) != callRecords.end ()) {
             walkGraph (*callRecords[call]);
-        } else if (!handle->yield (call)) {
-           errs() << "Handle library call: "<<
-                     call->getCalledFunction()->getName() <<"\n";
+        } else {
+           Instruction *Next = handle->handleCall (call);
+           if (Next == nullptr) {
+               errs() << "Handle library call: "<< call->getCalledFunction()->getName() <<"\n";
+           } else {
+               I = Next;
+           }
         }
     } else {
         assert (!I->isTerminator());
