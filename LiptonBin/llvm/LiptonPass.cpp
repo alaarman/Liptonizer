@@ -274,8 +274,8 @@ struct Liptonize : public LiptonPass::Processor {
     }
 
     enum area_e {
-        RightArea = 1,
-        LeftArea,
+        Pre = 1,
+        Post,
     };
 
     struct StackElem {
@@ -286,7 +286,7 @@ struct Liptonize : public LiptonPass::Processor {
 
     static StringRef                Action;
     DenseMap<BasicBlock *, int>     Seen;
-    area_e                          Area = RightArea;
+    area_e                          Area = Pre;
     int                             StackDepth = 0;
     vector<StackElem>               Stack;
 
@@ -298,10 +298,10 @@ struct Liptonize : public LiptonPass::Processor {
     {
         int &seen = Seen[&B];
         if (seen == 0) {
-            if (Pass->verbose) errs() << (Area==RightArea?"R ":"L ")<< B << "\n";
+            if (Pass->verbose) errs() << (Area==Pre?"R ":"L ")<< B << "\n";
             if (Pass->isYieldCall(B.getFirstNonPHI())) {
                 // safe to enter B as left area now
-                Stack.push_back ( StackElem(LeftArea, &B) );
+                Stack.push_back ( StackElem(Post, &B) );
             } else {
                 Stack.push_back ( StackElem(Area, &B) );
             }
@@ -324,7 +324,7 @@ struct Liptonize : public LiptonPass::Processor {
     thread (Function *T)
     {
         ThreadF = T;
-        Area = RightArea;
+        Area = Pre;
         //Seen.clear();  // TODO: overlapping threads!
     }
 
@@ -333,7 +333,7 @@ struct Liptonize : public LiptonPass::Processor {
     {
         if (call->getCalledFunction ()->getName ().endswith(PTHREAD_YIELD)) {
             if (Pass->verbose) outs () << "Yield "<< *call <<"\n";
-            Area = RightArea;
+            Area = Pre;
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_LOCK)) {
             doHandle (call, RightMover);
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_RLOCK)) {
@@ -377,14 +377,14 @@ private:
     Instruction* doHandle (Instruction *I, mover_e m)
     {
         if (Pass->verbose)
-        outs () << (Area == RightArea ? "R " : "L ") << *I << " -> \t"
+        outs () << (Area == Pre ? "R " : "L ") << *I << " -> \t"
                 << name (m) << "\n";
         Instruction *Ret = I;
 
         switch (m) {
         case RightMover:
-            if (Area == LeftArea) {
-                Area = RightArea;
+            if (Area == Post) {
+                Area = Pre;
                 assert(!I->isTerminator ());
                 if (!ThreadF->getName().equals("main") ||
                         Pass->PTCreate.size() != 0) {
@@ -394,13 +394,13 @@ private:
             }
             break;
         case LeftMover:
-            Area = LeftArea;
+            Area = Post;
             break;
         case NoneMover:
-            if (Area == LeftArea) {
+            if (Area == Post) {
                 assert(!I->isTerminator ());
             } else {
-                Area = LeftArea;
+                Area = Post;
             }
             if (!ThreadF->getName().equals("main") ||
                     Pass->PTCreate.size() != 0) {
