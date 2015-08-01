@@ -1,3 +1,5 @@
+
+
 cmake_minimum_required(VERSION 3.0.0)
 
 find_package(LLVM REQUIRED CONFIG)
@@ -10,14 +12,14 @@ message(STATUS "Using LLVM binaries from in: ${LLVM_TOOLS_BINARY_DIR}")
 project(LLVMPass CXX)
 
 
-SET (CMAKE_C_COMPILER             "${LLVM_TOOLS_BINARY_DIR}/clang")
+SET (CMAKE_C_COMPILER             "/opt/local/libexec/llvm-3.5/bin//clang")
 SET (CMAKE_C_FLAGS                "-Wall -std=c99")
 SET (CMAKE_C_FLAGS_DEBUG          "-g -O0")
 SET (CMAKE_C_FLAGS_MINSIZEREL     "-Os -DNDEBUG")
 SET (CMAKE_C_FLAGS_RELEASE        "-O4 -DNDEBUG")
 SET (CMAKE_C_FLAGS_RELWITHDEBINFO "-O2 -g")
 
-SET (CMAKE_CXX_COMPILER             "${LLVM_TOOLS_BINARY_DIR}/clang++")
+SET (CMAKE_CXX_COMPILER             "/opt/local/libexec/llvm-3.5/bin/clang++")
 SET (CMAKE_CXX_FLAGS                "-Wall -std=c++11")
 SET (CMAKE_CXX_FLAGS_DEBUG          "-g -O0")
 SET (CMAKE_CXX_FLAGS_MINSIZEREL     "-Os -DNDEBUG")
@@ -36,5 +38,27 @@ SET (CMAKE_RANLIB  "${LLVM_TOOLS_BINARY_DIR}/llvm-ranlib")
 include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions( ${LLVM_DEFINITIONS} )
 
-add_subdirectory(LiptonBin)
+
+
+llvm_map_components_to_libnames(llvm_libs support core bitreader bitwriter
+                                irreader mc transformutils analysis
+                                instrumentation object ipo ipa
+                                objcarcopts codegen tablegen)
+
+
+add_executable(LiptonPass
+                    util/BitMatrix.cpp
+                    util/SCCQuotientGraph.cpp
+                    llvm/ReachPass.cpp
+                    llvm/LiptonPass.cpp
+                    Lipton.cpp)
+
+include_directories(. ~/andersen/include/)
+
+
+FIND_LIBRARY(ANDERS_LIBRARY Anders lib)
+TARGET_LINK_LIBRARIES(LiptonPass ${ANDERS_LIBRARY})
+
+# Link against LLVM libraries
+target_link_libraries(LiptonPass ${llvm_libs})
 

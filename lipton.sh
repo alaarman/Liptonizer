@@ -13,4 +13,4 @@ opt -mem2reg \
     -instnamer \
     $1 > $T
 
-./LiptonBin $2 $T
+./LiptonPass $2 < $T
