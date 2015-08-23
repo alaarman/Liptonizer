@@ -1,6 +1,15 @@
 #!/bin/bash
 
-T=${1/.bc/-opt.bc}
+C=$1
+
+BC=${C/%c/bc}
+BC=${BC/%cpp/bc}
+
+clang -S -emit-llvm  $1 -o $BC
+
+llvm-dis $BC
+
+OPT=${BC/%\.bc/-opt.bc}
 
 opt -mem2reg \
     -internalize-public-api-list=main \
@@ -11,6 +20,12 @@ opt -mem2reg \
     -lcssa \
     -loop-unroll \
     -instnamer \
-    $1 > $T
+    $BC > $OPT
 
-./LiptonPass $2 < $T
+llvm-dis $OPT
+    
+L=${OPT/%\.bc/-lipton.bc}
+
+./LiptonPass ${@:2} < $OPT > $L 
+
+llvm-dis $L
