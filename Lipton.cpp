@@ -51,8 +51,24 @@ struct X : PassRegistrationListener {
     }
 };
 
+static void
+usage (const char *name)
+{
+    cerr << "" << name <<" [-v] [-n] [-s] < [in.bc] > [out.bc]" << endl;
+    cerr << endl;
+    cerr << "\t\t\t\t| phase var.\t| dyn. com.\t|"<< endl;
+    cerr << "-------------------------------------------------------------"<< endl;
+    cerr << "\t\t|\tnormal\t|\t+\t|\t+\t|"<< endl;
+    cerr << "\t-n\t|\tno dyn\t|\t+\t|\t-\t|"<< endl;
+    cerr << "\t-s\t|\tstatic\t|\t-\t|\t-\t|"<< endl;
+    cerr << endl;
+    cerr << "Select one of -n and -s (either no dynamic commutativity or static blocks)." << endl;
+    cerr << endl;
+    exit (-1);
+}
+
 int
-main( int argc, const char* argv[] )
+main( int argc, const char *argv[] )
 {
     Module *M;
     LLVMContext &context = getGlobalContext();
@@ -69,21 +85,23 @@ main( int argc, const char* argv[] )
     }
     M = mod.get();
 
-    bool phase = false;
-    bool staticBlocks = false;
+    bool nodyn = false;
+    bool staticAll = false;
     bool verbose = false;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0) {
             verbose = true;
-        }
-        if (strcmp(argv[i], "-s") == 0) {
-            staticBlocks = true;
-        }
-        if (strcmp(argv[i], "-p") == 0) {
-            phase = true;
+        } else if (strcmp(argv[i], "-s") == 0) {
+            staticAll = true;
+        } else if (strcmp(argv[i], "-n") == 0) {
+            nodyn = true;
+        } else {
+            usage (argv[0]);
         }
     }
-    ASSERT ( !(phase && staticBlocks), "Select one of -p and -s.");
+    if ( nodyn && staticAll ) {
+        usage (argv[0]);
+    }
 
     Function *main = M->getFunction("main");
     ASSERT (main, "No 'main' function. Library?\n");
@@ -118,15 +136,15 @@ main( int argc, const char* argv[] )
     CallGraphWrapperPass *cfgpass = new CallGraphWrapperPass();
     ReachPass *reach = new ReachPass();
 
-    LiptonPass *lipton = new LiptonPass(*reach, "stdin", verbose, staticBlocks,
-                                        phase);
+    LiptonPass *lipton = new LiptonPass(*reach, "stdin", verbose, staticAll,
+                                        nodyn);
 
     //pm.add (indvars);
     //pm.add (lur);
     pm.add (cfgpass);
     pm.add (reach);
     pm.add (dlp);
-    if (staticBlocks)
+    if (staticAll)
         pm.add (ba);
     else
         pm.add (aaa);
