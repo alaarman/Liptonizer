@@ -28,8 +28,9 @@ using namespace llvm;
 namespace VVT {
 
 enum block_e {
-    Static = 0,
-    Dynamic,
+    Static = 0,     // loop blocks
+    PhaseDynamic,   // phase dynamic blocks
+    CommDynamic,   // commutativity dynamic blocks
 };
 
 enum yield_loc_e {
@@ -50,17 +51,37 @@ public:
     static char         ID;
     string              Name;
     bool                verbose;
-    bool                staticBlocks;
-    bool                phase;
-    int                 Block = 1;
+    bool                staticAll;  // no phase && dynamic commutativity
+    bool                noDyn;      // no dynamic commutativity
+
+    AliasAnalysis                  *AA = nullptr;
+    ReachPass                      *Reach = nullptr;
 
     LiptonPass();
     LiptonPass(ReachPass &RP, string name, bool v, bool staticBlocks,
                bool phase);
 
+    struct LLVMThread {
+        LLVMThread(Function *F, int i, LiptonPass *Pass)
+        :
+            Function(*F),
+            index(i)
+        {
+            Aliases = new AliasSetTracker(*Pass->AA);
+            runs = &Pass->Reach->Threads[F];
+        }
+
+        DenseMap<Instruction *, pair<block_e, int>> BlockStarts;
+        AliasSetTracker                            *Aliases;
+        Function                                   &Function;
+        AllocaInst                                 *PhaseVar = nullptr;
+        int                                         index;
+        vector<Instruction *>                      *runs;
+    };
+
     struct Processor {
         LiptonPass                 *Pass;
-        Function                   *ThreadF = NULL;
+        LLVMThread                 *ThreadF = nullptr;
         Processor(LiptonPass *L, StringRef action) : Pass(L) {  }
         virtual ~Processor() {}
         virtual Instruction *process (Instruction *I)
@@ -69,31 +90,21 @@ public:
         virtual void thread (Function *F) {}
         virtual bool block (BasicBlock &B) { return false; }
         virtual void deblock (BasicBlock &B) {  }
+
+        bool    isBlockStart (Instruction *I);
+        int     insertBlock (Instruction *I, yield_loc_e loc, block_e yieldType);
     };
 
-
+    //AliasSetTracker                            *AST;
     DenseSet<Instruction *>                     PTCreate;
     DenseMap<AliasSet *, list<Instruction *>>   AS2I;
-    DenseMap<Instruction *, pair<block_e, int>> BlockStarts;
-    DenseMap<Function *, AliasSetTracker *>     ThreadAliases;
-    DenseMap<Instruction *, Function *>         I2T;
-    Function                       *Yield = nullptr;
-    Function                       *Act = nullptr;
-    AliasAnalysis                  *AA = nullptr;
-    ReachPass                      *Reach = nullptr;
-    Type                           *Int64 = nullptr;
-
-    DenseMap<Function *, AllocaInst *> Phases;
-
-    bool isYieldCall (Instruction *I);
-    void insertYield (Instruction *I, yield_loc_e loc);
-    mover_e movable(Instruction *I);
+    DenseMap<Function *, LLVMThread *>          Threads;
+    DenseMap<Instruction *, LLVMThread *>         I2T;
 
 private:
     Processor                      *handle = nullptr;
 
-    void dynamicYield (DenseMap<Function *, Instruction *> &Starts,
-                       Instruction *I, block_e type, int b);
+    void dynamicYield (Instruction *I, block_e type, int b);
     // getAnalysisUsage - This pass requires the CallGraph.
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
     bool runOnModule (Module &M);
@@ -102,8 +113,7 @@ private:
     void walkGraph ( BasicBlock &B );
     void walkGraph ( Function &F );
     void conflictingNonMovers (SmallVector<Value*, 8> &sv,
-                               Instruction *I,
-                               DenseMap<Function *, Instruction *> &Starts);
+                               Instruction *I);
     void initialInstrument (Module &M);
     void finalInstrument (Module &M);
     template <typename ProcessorT>
