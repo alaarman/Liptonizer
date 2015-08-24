@@ -97,10 +97,12 @@ getMetaData (Instruction *I, const char *type)
     return S->getString();
 }
 
+// > 0 for Seen map
 enum area_e {
-    Pre = 1<<0,    // > 0 for Seen map
-    Post= 1<<1,    //
-    Top = Pre | Post
+    Bottom  = 1<<0,         // Think both-mover paths before/after static yields
+    Pre     = 1<<1,         //
+    Post    = 1<<2,         //
+    Top     = Pre | Post    //
 };
 
 static const char *
@@ -119,6 +121,7 @@ static const char *
 name ( area_e m )
 {
     switch (m) {
+    case Bottom:return "Bottom";
     case Pre:   return "Pre";
     case Post:  return "Post";
     case Top:   return "Top";
@@ -340,6 +343,12 @@ struct Collect : public LiptonPass::Processor {
 };
 
 /**
+ * Marks instructions that can be (dynamic) atomic section starts.
+ *
+ * The current phase is statically over-estimated using a lattice of phase
+ * states (area_e). If the search (re)encounters a visited/queud block with
+ * a lower phase than it was preciously visited with, it is revisited with the
+ * higher order phase and the block boundary is strengthened (made less dynamic).
  *
  */
 struct Liptonize : public LiptonPass::Processor {
@@ -390,6 +399,7 @@ struct Liptonize : public LiptonPass::Processor {
     using Processor::Processor;
     ~Liptonize() { }
 
+    // block and deblock implement revisiting
     bool
     block ( BasicBlock &B )
     {
@@ -402,14 +412,20 @@ struct Liptonize : public LiptonPass::Processor {
             return true;
         }
 
+        //TODO TODO TODO TODO TODO TODO TODO TODO  staticAll?
         if (seen < 0) { // stack
             int Index = -seen - 1;
             StackElem Previous = Stack[Index];
             if (Previous.Seen < Area) {
                 if (Pass->verbose) errs() << name(Area)  <<" --(revisit)--> "<<  name(Previous.Seen) <<": "<< B << "\n";
 
-                if (Area != Pre && Previous.Seen != Post) { // Post --> Pre
-                    insertBlock (B.getFirstNonPHI(), CommDynamic);
+                // TODO: create two entry points to dynamically distinguish
+                if ((Area & Post) && (Previous.Seen & Pre)) { // Post --> Pre
+                    Instruction *N = B.getFirstNonPHI ();
+                    assert (isBlockStart(N) &&
+                            (ThreadF->BlockStarts[N].first == StaticLocal ||
+                             ThreadF->BlockStarts[N].first == Static));
+                    insertBlock (N, Static);
                 }
 
                 // re-explore: make stack overlap:
@@ -423,8 +439,9 @@ struct Liptonize : public LiptonPass::Processor {
         } else {
             if (seen < Area) {
                 if (Pass->verbose) errs() << name(Area)  <<" --(revisit)--> "<<  name((area_e)seen) <<": "<< B << "\n";
-                if (Area != Pre && seen != Post) { // Post --> Pre
-                    insertBlock (B.getFirstNonPHI(), CommDynamic);
+
+                if ((Area & Post) && (seen & Pre)) { // Post --> Pre
+                    insertBlock (B.getFirstNonPHI(), PhaseDynamic);
                 }
 
                 // re-explore visited blocks:
@@ -459,7 +476,8 @@ struct Liptonize : public LiptonPass::Processor {
     {
         assert (Stack.empty());
         ThreadF = Pass->Threads[T];
-        Area = Pre;
+        Area = Bottom; // We always start from a static yield
+
         //Seen.clear();  // TODO: overlapping threads!
     }
 
@@ -468,7 +486,7 @@ struct Liptonize : public LiptonPass::Processor {
     {
         if (call->getCalledFunction ()->getName ().endswith(PTHREAD_YIELD)) {
             errs () << "WARNING: pre-existing Yield call: "<< *call <<"\n";
-            Area = Pre;
+            Area = Bottom;
             assert (false); // record block
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_LOCK)) {
             doHandle (call, RightMover);
@@ -523,16 +541,17 @@ private:
 
         addMetaData (I, AREA, name(Area));
 
+        if (isBlockStart(I) && ThreadF->BlockStarts[I].first == Static) {
+            Area = Bottom;
+        }
+
         if (Pass->staticAll) {
 
-            assert (Area != Top);
-            if (isBlockStart(I) && ThreadF->BlockStarts[I].first == Static) {
-                Area = Pre;
-            }
+            assert (Area != Top); // can be Bottom!
 
             switch (m) {
             case RightMover:
-                if (Area == Post) {
+                if (Area == Post || Area == Bottom) {
                     insertBlock (I, Static);
                     Area = Pre;
                 }
@@ -556,19 +575,19 @@ private:
 
             switch (m) {
             case RightMover:
-                if (Area != Pre) {
+                if (Area != Pre || Area == Bottom) {
                     insertBlock (I, PhaseDynamic);
                     Area = Top;
                 }
                 break;
             case LeftMover:
-                if (Area != Post) {
+                if (Area != Post || Area == Bottom) {
                     insertBlock (I, NoBlock);
                 }
                 Area = Post;
                 break;
             case NoneMover:
-                if (Area == Pre) {
+                if (Area == Pre || Area == Bottom) {
                     insertBlock (I, NoBlock);
                 } else {
                     insertBlock (I, CommDynamic);
@@ -584,6 +603,10 @@ private:
         }
 
         addMetaData (I, MOVER, name(m));
+
+        if (isBlockStart(I) && ThreadF->BlockStarts[I].first == Static) {
+            Area = Bottom;
+        }
 
         return I;
     }
@@ -875,13 +898,14 @@ LiptonPass::initialInstrument (Module &M)
     Act = cast<Function> (C2);
     Int64 = Type::getInt64Ty(M.getContext());
 
-    // fix meta data strings order
+    // fix meta data strings order TODO: to no prevail
     Instruction *firstNonPhi = M.getFunction("main")->getEntryBlock().getFirstNonPHI();
     addMetaData (firstNonPhi, MOVER, name(BothMover));
     addMetaData (firstNonPhi, MOVER, name(LeftMover));
     addMetaData (firstNonPhi, MOVER, name(RightMover));
     addMetaData (firstNonPhi, MOVER, name(NoneMover));
 
+    addMetaData (firstNonPhi, AREA, name(Bottom));
     addMetaData (firstNonPhi, AREA, name(Pre));
     addMetaData (firstNonPhi, AREA, name(Post));
     addMetaData (firstNonPhi, AREA, name(Top));
