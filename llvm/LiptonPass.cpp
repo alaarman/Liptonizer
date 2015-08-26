@@ -208,7 +208,6 @@ LiptonPass::Processor::insertBlock (Instruction *I,
                 yieldType = Static; // reuse block ID
                 // TODO: could be dynamic if the loop already contains a static yield
             }
-            ASSERT (ExistingType != NoBlock, "Hypothesis (Pre can safely update to even Top).");
 
             errs () << "WARNING: Overwriting dynamic block "<< name(ExistingType) <<" --> "<< name(yieldType) <<": " << *I << endll;
             // TODO: in case paths up to yields are only non-movers (use Bottom == {})
@@ -440,6 +439,7 @@ struct Liptonize : public LiptonPass::Processor {
         return false;
     }
 
+    // TODO: backtrack Bottom up
     void
     deblock ( BasicBlock &B )
     {
