@@ -13,6 +13,10 @@
 
 using namespace std;
 
+// avoid stdout
+#define outs
+#define cout
+
 #ifndef NDEBUG
 #   define ASSERT(condition, message) \
     do { \

@@ -159,6 +159,7 @@ main( int argc, const char *argv[] )
     // verify
     verifyModule (*M, &errs());
 
+#undef outs // util/util.h
     WriteBitcodeToFile(M, outs());
     outs().flush();
 }

@@ -20,7 +20,7 @@ using namespace std;
 #   define LLASSERT(condition, message) \
     do { \
         if (! (condition)) { \
-            outs() << "Assertion `" #condition "` failed in " << __FILE__ \
+            errs() << "Assertion `" #condition "` failed in " << __FILE__ \
                  << " line " << __LINE__ << ": " << message << "\n"; \
             exit(EXIT_FAILURE); \
         } \

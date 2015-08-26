@@ -102,8 +102,8 @@ public:
     const bool operator[](int x) const;
     BitVector &operator|=(BitVector &x);
 
-    void print (llvm::raw_ostream &outs, size_t max);
-    void print (llvm::raw_ostream &outs);
+    void print (llvm::raw_ostream &out, size_t max);
+    void print (llvm::raw_ostream &out);
     void ensure (size_t size);
 };
 
@@ -121,7 +121,7 @@ public:
     bool get (int col, int row);
     void ensure (int new_cols, int new_rows);
 
-    void print (llvm::raw_ostream &outs);
+    void print (llvm::raw_ostream &out);
 };
 
 }

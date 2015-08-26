@@ -78,18 +78,18 @@ BitVector::ensure (size_t size)
 }
 
 void
-BitVector::print (llvm::raw_ostream &outs, size_t max)
+BitVector::print (llvm::raw_ostream &out, size_t max)
 {
     for (size_t col = 0; col < max; col++) {
-        outs << ((*this)[col] ? "1," : "0,");
+        out << ((*this)[col] ? "1," : "0,");
     }
-    outs << "\n";
+    out << "\n";
 }
 
 void
-BitVector::print (llvm::raw_ostream &outs)
+BitVector::print (llvm::raw_ostream &out)
 {
-    print (outs, Num);
+    print (out, Num);
 }
 
 BitMatrix::BitMatrix(int init_cols, int init_rows) {
@@ -167,12 +167,12 @@ BitMatrix::ensure (int new_cols, int new_rows)
 }
 
 void
-BitMatrix::print (llvm::raw_ostream &outs)
+BitMatrix::print (llvm::raw_ostream &out)
 {
     for (int row = 0; row < RowSize; row++) {
-        rows[row]->print (outs, ColSize);
+        rows[row]->print (out, ColSize);
     }
-    outs << "\n\n";
+    out << "\n\n";
 }
 
 }

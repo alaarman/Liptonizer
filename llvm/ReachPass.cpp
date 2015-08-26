@@ -244,7 +244,7 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
 }
 
 static void printF (pair<Function *, std::vector<Instruction *>> &F) {
-    outs () << F.first->getName() <<", ";
+    errs () << F.first->getName() <<", ";
 }
 
 void
@@ -252,7 +252,7 @@ ReachPass::printClosure() {
     blockQuotient.print ();
 
     for_each (Threads.begin(), Threads.end(), printF);
-    outs ()  << "\n";
+    errs ()  << "\n";
 
     instrQuotient.print ();
 }
@@ -292,10 +292,10 @@ ReachPass::printNode (CallGraphNode* const node, CallGraphSCC& SCC)
 {
     Function* F = node->getFunction ();
 
-    outs () << get_name (F) << " calls: ";
+    errs () << get_name (F) << " calls: ";
     for (CallGraphNode::CallRecord rec : *node) {
         Function* callee = rec.second->getFunction ();
-        outs () << get_name (callee) << ", ";
+        errs () << get_name (callee) << ", ";
     }
     errs () << "\n";
 
