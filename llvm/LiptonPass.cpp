@@ -90,7 +90,7 @@ addMetaData (Instruction *I, const char *type, const char *s)
     I->setMetadata (type, N);
 }
 
-static StringRef
+static StringRef __attribute__((unused))
 getMetaData (Instruction *I, const char *type)
 {
     MDString *S = cast<MDString>(I->getMetadata(type)->getOperand(0));
@@ -691,6 +691,7 @@ void
 LiptonPass::walkGraph ( BasicBlock &B )
 {
     if (handle->block (B)) {
+        assert (!B.empty());
         walkGraph (&B.front());
         handle->deblock (B);
     }
@@ -897,19 +898,6 @@ LiptonPass::initialInstrument (Module &M)
     Constant *C2 = M.getOrInsertFunction (__ACT, FunctionType::get (Bool, true));
     Act = cast<Function> (C2);
     Int64 = Type::getInt64Ty(M.getContext());
-
-    // fix meta data strings order TODO: to no prevail
-    Instruction *firstNonPhi = M.getFunction("main")->getEntryBlock().getFirstNonPHI();
-    addMetaData (firstNonPhi, MOVER, name(BothMover));
-    addMetaData (firstNonPhi, MOVER, name(LeftMover));
-    addMetaData (firstNonPhi, MOVER, name(RightMover));
-    addMetaData (firstNonPhi, MOVER, name(NoneMover));
-
-    addMetaData (firstNonPhi, AREA, name(Bottom));
-    addMetaData (firstNonPhi, AREA, name(Pre));
-    addMetaData (firstNonPhi, AREA, name(Post));
-    addMetaData (firstNonPhi, AREA, name(Top));
-    getMetaData (firstNonPhi, AREA);
 }
 
 void
