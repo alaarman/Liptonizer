@@ -876,8 +876,7 @@ LiptonPass::initialInstrument (Module &M)
     Int64 = Type::getInt64Ty(M.getContext());
 
     // fix meta data strings order
-    Instruction *firstNonPhi =
-            M.getFunctionList ().begin ()->getEntryBlock ().getFirstNonPHI ();
+    Instruction *firstNonPhi = M.getFunction("main")->getEntryBlock().getFirstNonPHI();
     addMetaData (firstNonPhi, MOVER, name(BothMover));
     addMetaData (firstNonPhi, MOVER, name(LeftMover));
     addMetaData (firstNonPhi, MOVER, name(RightMover));
