@@ -5,7 +5,9 @@ C=$1
 BC=${C/%c/bc}
 BC=${BC/%cpp/bc}
 
-clang -S -emit-llvm  $1 -o $BC
+set -e
+
+clang -emit-llvm -c $1 -o $BC
 
 llvm-dis $BC
 
