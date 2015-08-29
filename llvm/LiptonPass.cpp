@@ -46,7 +46,6 @@ using namespace std;
 
 namespace VVT {
 
-//TODO: locks are left movers!
 
 static Constant *TRUE;
 static Constant *FALSE;
@@ -88,13 +87,6 @@ addMetaData (Instruction *I, const char *type, const char *s)
     MDString *str = MDString::get (Context, s);
     MDNode *N = MDNode::get (Context, str);
     I->setMetadata (type, N);
-}
-
-static StringRef __attribute__((unused))
-getMetaData (Instruction *I, const char *type)
-{
-    MDString *S = cast<MDString>(I->getMetadata(type)->getOperand(0));
-    return S->getString();
 }
 
 static const char *
@@ -156,43 +148,6 @@ LiptonPass::getAnalysisUsage (AnalysisUsage &AU) const
     AU.setPreservesCFG();
     AU.addRequired<AliasAnalysis>();
     AU.addRequired<CallGraphWrapperPass>();
-}
-
-bool
-LiptonPass::Processor::isBlockStart (Instruction *I)
-{
-    return ThreadF->BlockStarts.find(I) != ThreadF->BlockStarts.end();
-}
-
-/**
- * Creates a block for this instruction (yield / commit before instruction).
- */
-int
-LiptonPass::Processor::insertBlock (Instruction *I, block_e yieldType)
-{
-    assert (!I->isTerminator());
-
-    if (yieldType != LoopBlock && ThreadF->Function.getName().equals("main") &&
-                             Pass->PTCreate.size() == 0) {
-        return -1; // TODO: precise pthread_create / join count
-    }
-
-    unsigned int blockID = ThreadF->BlockStarts.size ();
-
-    if (isBlockStart(I)) {
-        block_e ExistingType = ThreadF->BlockStarts[I].first;
-        yieldType = (block_e) ((int)yieldType | (int)ExistingType);
-
-        errs () << "WARNING: Overwriting dynamic block "<< name(ExistingType) <<" --> "<< name(yieldType) <<": " << *I << endll;
-        blockID = ThreadF->BlockStarts[I].second; // reuse block ID
-    }
-
-    if (Pass->verbose) errs () << "New " << name(yieldType) << " block: " << *I << "\n";
-
-    //assert (blockID < (1ULL << 16));
-    //int globalBlockID = blockID + (1ULL << 16) * ThreadF->index;
-    ThreadF->BlockStarts[I] = make_pair (yieldType, blockID);
-    return blockID;
 }
 
 static AliasSet *
@@ -259,10 +214,6 @@ struct Collect : public LiptonPass::Processor {
             seen = Stacked;
             Stack.push_back (&B);
             return true;
-        } else if (seen == Stacked) {
-            Instruction *firstNonPhi = B.getFirstNonPHI ();
-            LLASSERT (firstNonPhi, "No Instruction in " << B);
-            insertBlock (firstNonPhi, LoopBlock);
         }
         return false;
     }
@@ -274,21 +225,11 @@ struct Collect : public LiptonPass::Processor {
     }
 
     void
-    thread (Function *F)
+    thread (Function *T)
     {
-        ThreadF = Pass->Threads[F];
+        ThreadF = Pass->Threads[T];
         Seen.clear(); // restart with exploration
-        Instruction *Start = F->getEntryBlock ().getFirstNonPHI ();
-
-        // Skip empty blocks, as we do not want terminators in BlockStarts
-        while (TerminatorInst *T = dyn_cast<TerminatorInst> (Start)) {
-            assert (T->getNumSuccessors() == 1);
-            Start = T->getSuccessor(0)->getFirstNonPHI();
-        }
-
-        int b = insertBlock (Start, LoopBlock);
-        assert (b == 0); // start block
-    }
+     }
 
     Instruction *
     process (Instruction *I)
@@ -322,8 +263,6 @@ struct Collect : public LiptonPass::Processor {
  */
 struct Liptonize : public LiptonPass::Processor {
 
-
-
     mover_e
     movable (Instruction *I)
     {
@@ -345,7 +284,6 @@ struct Liptonize : public LiptonPass::Processor {
         }
         return BothMover;
     }
-
 
     struct StackElem {
         StackElem (area_e a, BasicBlock *B)
@@ -382,6 +320,11 @@ struct Liptonize : public LiptonPass::Processor {
         }
 
         if (seen < 0) { // stack
+
+            Instruction *firstNonPhi = B.getFirstNonPHI ();
+            LLASSERT (firstNonPhi, "No Instruction in " << B);
+            insertBlock (firstNonPhi, LoopBlock);
+
             int Index = -seen - 1;
             StackElem Previous = Stack[Index];
             if (Previous.Seen < Area) {
@@ -432,7 +375,16 @@ struct Liptonize : public LiptonPass::Processor {
         ThreadF = Pass->Threads[T];
         Area = Bottom; // We always start from a static yield
 
-        //Seen.clear();  // TODO: overlapping threads!
+        Instruction *Start = T->getEntryBlock ().getFirstNonPHI ();
+        // Skip empty blocks, as we do not want terminators in BlockStarts
+        while (TerminatorInst *T = dyn_cast<TerminatorInst> (Start)) {
+            assert (T->getNumSuccessors() == 1);
+            Start = T->getSuccessor(0)->getFirstNonPHI();
+        }
+        int b = insertBlock (Start, LoopBlock);
+        assert (b == 0); // start block
+
+        Seen.clear();
     }
 
     Instruction *
@@ -503,6 +455,9 @@ private:
         ThreadF->CommitArea[I] = make_pair (Area, m);
 
         addMetaData (I, AREA, name(Area));
+        if (m != BothMover) {
+            addMetaData (I, MOVER, name(m));
+        }
 
         switch (m) {
         case RightMover:
@@ -525,10 +480,6 @@ private:
             break;
         default:
             ASSERT(false, "Missing case.");
-        }
-
-        if (m != BothMover) {
-            addMetaData (I, MOVER, name(m));
         }
 
         return I;
@@ -571,6 +522,44 @@ private:
                Pass->PTCreate.empty ();
         // TODO: remove limitation of necessary function inlining
     }
+
+
+    bool
+    isBlockStart (Instruction *I)
+    {
+        return ThreadF->BlockStarts.find(I) != ThreadF->BlockStarts.end();
+    }
+
+    /**
+     * Creates a block for this instruction (yield / commit before instruction).
+     */
+    int
+    insertBlock (Instruction *I, block_e yieldType)
+    {
+        assert (!I->isTerminator());
+
+        if (yieldType != LoopBlock && singleThreaded(I)) {
+            return -1; // TODO: precise pthread_create / join count
+        }
+
+        unsigned int blockID = ThreadF->BlockStarts.size ();
+
+        if (isBlockStart(I)) {
+            block_e ExistingType = ThreadF->BlockStarts[I].first;
+            yieldType = (block_e) ((int)yieldType | (int)ExistingType);
+
+            errs () << "WARNING: Overwriting dynamic block "<< name(ExistingType) <<" --> "<< name(yieldType) <<": " << *I << endll;
+            blockID = ThreadF->BlockStarts[I].second; // reuse block ID
+        }
+
+        if (Pass->verbose) errs () << "New " << name(yieldType) << " block: " << *I << "\n";
+
+        //assert (blockID < (1ULL << 16));
+        //int globalBlockID = blockID + (1ULL << 16) * ThreadF->index;
+        ThreadF->BlockStarts[I] = make_pair (yieldType, blockID);
+        return blockID;
+    }
+
 };
 
 StringRef Collect::Action = "Collecting";
