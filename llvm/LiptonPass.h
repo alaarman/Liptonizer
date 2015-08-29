@@ -28,18 +28,24 @@ using namespace llvm;
 namespace VVT {
 
 enum block_e {
-    NoBlock = 0,    // only phase shift                     (no  yield)
-    StaticLocal,    // loop blocks                          (    yield local)
-    PhaseDynamic,   // phase dynamic blocks                 (may yield global)
-    CommDynamic,    // commutativity dynamic blocks         (may yield global)
-    Static          // staticAll mode/preinstrumented code  (    yield global)
+    YieldBlock   = 1 << 0,
+    LoopBlock    = 1 << 1,
+    CoincidingBlock = LoopBlock|YieldBlock,
 };
 
 enum mover_e {
-    NoneMover   = 0,
-    RightMover  = 1,
-    LeftMover   = 2,
-    BothMover   = 3,
+    NoneMover   = 1,
+    RightMover  = 2,
+    LeftMover   = 3,
+    BothMover   = 4,
+};
+
+// > 0 for Seen map
+enum area_e {
+    Bottom  = 1<<0,         // Think both-mover paths before/after static yields
+    Pre     = 1<<1,         //
+    Post    = 1<<2,         //
+    Top     = Pre | Post    //
 };
 
 class LiptonPass : public ModulePass {
@@ -74,6 +80,7 @@ public:
         AllocaInst                                 *PhaseVar = nullptr;
         int                                         index;
         vector<Instruction *>                      *Runs;
+        DenseMap<Instruction *, pair<area_e, mover_e>>  CommitArea;
     };
 
     struct Processor {
@@ -89,7 +96,7 @@ public:
         virtual void deblock (BasicBlock &B) {  }
 
         bool    isBlockStart (Instruction *I);
-        int     insertBlock (Instruction *I, block_e yieldType);
+        int     insertBlock (Instruction *I, block_e type);
     };
 
     //AliasSetTracker                            *AST;
@@ -101,7 +108,8 @@ public:
 private:
     Processor                      *handle = nullptr;
 
-    void dynamicYield (Instruction *I, block_e type, int b);
+    void dynamicYield (LLVMThread *T, Instruction *I, block_e type, int b);
+    void staticYield (LLVMThread *T, Instruction *I, block_e type, int b);
     // getAnalysisUsage - This pass requires the CallGraph.
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
     bool runOnModule (Module &M);
@@ -112,7 +120,7 @@ private:
     template <typename ProcessorT>
     void walkGraph (Module &M);
 
-    void conflictingNonMovers (SmallVector<Value*, 8> &sv,
+    bool conflictingNonMovers (SmallVector<Value*, 8> &sv,
                                Instruction *I);
     void initialInstrument (Module &M);
     void finalInstrument (Module &M);

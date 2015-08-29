@@ -30,6 +30,12 @@ using namespace std;
 #   define ASSERT(condition, message) do { } while (false)
 #endif
 
+#define SWAP(a,b) ({ \
+    typeof(a) tmp = a; \
+    a = b; \
+    b = tmp; \
+})
+
 static inline bool
 ends_with(string const & value, string const & ending)
 {

@@ -71,7 +71,7 @@ static const char *ATOMIC_END       = "atomic_end";
 char LiptonPass::ID = 0;
 static RegisterPass<LiptonPass> X("lipton", "Lipton reduction");
 
-Function                       *Yield = nullptr;
+Function                       *YieldGlobal = nullptr;
 Function                       *YieldLocal = nullptr;
 Function                       *Act = nullptr;
 Type                           *Int64 = nullptr;
@@ -96,14 +96,6 @@ getMetaData (Instruction *I, const char *type)
     MDString *S = cast<MDString>(I->getMetadata(type)->getOperand(0));
     return S->getString();
 }
-
-// > 0 for Seen map
-enum area_e {
-    Bottom  = 1<<0,         // Think both-mover paths before/after static yields
-    Pre     = 1<<1,         //
-    Post    = 1<<2,         //
-    Top     = Pre | Post    //
-};
 
 static const char *
 name ( mover_e m )
@@ -133,11 +125,9 @@ static const char *
 name ( block_e m )
 {
     switch (m) {
-    case NoBlock:       return "PhaseShift";
-    case StaticLocal:   return "StaticLocal";
-    case PhaseDynamic:  return "DynamicPhase";
-    case CommDynamic:   return "DynamicComm";
-    case Static:        return "Static";
+    case YieldBlock:        return "Global Yield";
+    case LoopBlock:         return "Local Yield";
+    case CoincidingBlock:   return "Global+Local Yield";
     default: ASSERT (false, "Missing case."); return 0;
     }
 }
@@ -175,47 +165,26 @@ LiptonPass::Processor::isBlockStart (Instruction *I)
 }
 
 /**
- * Creates a block for this instruction.
- *
- * Block types come in four types:
- *
- * o NoBlock, indicates only that the instruction shifts phase form pre to post commit,
- * o Static, indicates that a loop has to be broken (yield_local suffices)
- * o PhaseDynamic, indicates that based on the phase variable a global yield may be necessary
- * o CommDynamic, indicates that the instruction might dynamically commute (check __act)
- *
- * In this order, one block start implies the other, meaning that we can always
- * safely replace more static blocks with more dynamic blocks (at the cost of
- * complicating the verification task).
+ * Creates a block for this instruction (yield / commit before instruction).
  */
 int
-LiptonPass::Processor::insertBlock (Instruction *I,
-                                    block_e yieldType)
+LiptonPass::Processor::insertBlock (Instruction *I, block_e yieldType)
 {
+    assert (!I->isTerminator());
 
-    if (yieldType != StaticLocal && ThreadF->Function.getName().equals("main") &&
-                               Pass->PTCreate.size() == 0) {
-        return -1;
+    if (yieldType != LoopBlock && ThreadF->Function.getName().equals("main") &&
+                             Pass->PTCreate.size() == 0) {
+        return -1; // TODO: precise pthread_create / join count
     }
 
     unsigned int blockID = ThreadF->BlockStarts.size ();
 
     if (isBlockStart(I)) {
         block_e ExistingType = ThreadF->BlockStarts[I].first;
-        if (ExistingType >= yieldType) {
-            // a >= b = a is more dynamic than b
-            return -1;
-        } else { // we replace the dynamic block with a new static one!
+        yieldType = (block_e) ((int)yieldType | (int)ExistingType);
 
-            if (ExistingType == StaticLocal) {
-                yieldType = Static; // reuse block ID
-                // TODO: could be dynamic if the loop already contains a static yield
-            }
-
-            errs () << "WARNING: Overwriting dynamic block "<< name(ExistingType) <<" --> "<< name(yieldType) <<": " << *I << endll;
-            // TODO: in case paths up to yields are only non-movers (use Bottom == {})
-            blockID = ThreadF->BlockStarts[I].second; // reuse block ID
-        }
+        errs () << "WARNING: Overwriting dynamic block "<< name(ExistingType) <<" --> "<< name(yieldType) <<": " << *I << endll;
+        blockID = ThreadF->BlockStarts[I].second; // reuse block ID
     }
 
     if (Pass->verbose) errs () << "New " << name(yieldType) << " block: " << *I << "\n";
@@ -293,7 +262,7 @@ struct Collect : public LiptonPass::Processor {
         } else if (seen == Stacked) {
             Instruction *firstNonPhi = B.getFirstNonPHI ();
             LLASSERT (firstNonPhi, "No Instruction in " << B);
-            insertBlock (firstNonPhi, StaticLocal);
+            insertBlock (firstNonPhi, LoopBlock);
         }
         return false;
     }
@@ -317,7 +286,7 @@ struct Collect : public LiptonPass::Processor {
             Start = T->getSuccessor(0)->getFirstNonPHI();
         }
 
-        int b = insertBlock (Start, StaticLocal);
+        int b = insertBlock (Start, LoopBlock);
         assert (b == 0); // start block
     }
 
@@ -356,7 +325,7 @@ struct Liptonize : public LiptonPass::Processor {
 
 
     mover_e
-    movable(Instruction *I)
+    movable (Instruction *I)
     {
         if (singleThreaded(I)) {
             return BothMover;
@@ -393,7 +362,7 @@ struct Liptonize : public LiptonPass::Processor {
 
     static StringRef                Action;
     DenseMap<BasicBlock *, int>     Seen;
-    area_e                          Area = Pre;
+    area_e                          Area = Bottom;
     vector<StackElem>               Stack;
 
     using Processor::Processor;
@@ -412,21 +381,11 @@ struct Liptonize : public LiptonPass::Processor {
             return true;
         }
 
-        //TODO TODO TODO TODO TODO TODO TODO TODO  staticAll?
         if (seen < 0) { // stack
             int Index = -seen - 1;
             StackElem Previous = Stack[Index];
             if (Previous.Seen < Area) {
                 if (Pass->verbose) errs() << name(Area)  <<" --(revisit)--> "<<  name(Previous.Seen) <<": "<< B << "\n";
-
-                // TODO: create two entry points to dynamically distinguish
-                if ((Area & Post) && (Previous.Seen & Pre)) { // Post --> Pre
-                    Instruction *N = B.getFirstNonPHI ();
-                    assert (isBlockStart(N) &&
-                            (ThreadF->BlockStarts[N].first == StaticLocal ||
-                             ThreadF->BlockStarts[N].first == Static));
-                    insertBlock (N, Static);
-                }
 
                 // re-explore: make stack overlap:
                 Previous.Seen = Area;
@@ -440,12 +399,7 @@ struct Liptonize : public LiptonPass::Processor {
             if (seen < Area) {
                 if (Pass->verbose) errs() << name(Area)  <<" --(revisit)--> "<<  name((area_e)seen) <<": "<< B << "\n";
 
-                if ((Area & Post) && (seen & Pre)) { // Post --> Pre
-                    insertBlock (B.getFirstNonPHI(), PhaseDynamic);
-                }
-
                 // re-explore visited blocks:
-                if (Pass->verbose) errs() << name(Area)  <<" (revisit): "<< B << "\n";
                 Stack.push_back ( StackElem(Area, &B) );
                 seen = -Stack.size();
                 return true;
@@ -487,7 +441,6 @@ struct Liptonize : public LiptonPass::Processor {
         if (call->getCalledFunction ()->getName ().endswith(PTHREAD_YIELD)) {
             errs () << "WARNING: pre-existing Yield call: "<< *call <<"\n";
             Area = Bottom;
-            assert (false); // record block
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_LOCK)) {
             doHandle (call, RightMover);
         } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_RLOCK)) {
@@ -525,12 +478,20 @@ struct Liptonize : public LiptonPass::Processor {
     Instruction *
     process (Instruction *I)
     {
+        pair<area_e, mover_e> &previous = ThreadF->CommitArea[I];
+        if ((previous.first == Pre && Area == Post) ||
+            (previous.first == Post && Area == Pre)) // 0 iff undefined
+            Area = Top;
+
         if (I->isTerminator()) {
             return I;
         }
 
-        mover_e m = movable (I);
-        return doHandle (I, m);
+        mover_e Mover = previous.second;
+        if (Mover == 0)
+            Mover = movable (I);
+
+        return doHandle (I, Mover);
     }
 
 private:
@@ -539,73 +500,35 @@ private:
     {
         if (Pass->verbose) errs () << name(Area) << *I << " -> \t"<< name(m) << "\n";
 
+        ThreadF->CommitArea[I] = make_pair (Area, m);
+
         addMetaData (I, AREA, name(Area));
 
-        if (isBlockStart(I) && ThreadF->BlockStarts[I].first == Static) {
-            Area = Bottom;
+        switch (m) {
+        case RightMover:
+            if (Area & Post) { // Post, Top
+                insertBlock (I, YieldBlock);
+            }
+            Area = Pre;
+            break;
+        case LeftMover:
+            if (Area != Post) { // Bottom, Pre, Top
+                insertBlock (I, YieldBlock);
+            }
+            Area = Post;
+            break;
+        case NoneMover:
+            insertBlock (I, YieldBlock);
+            Area = Top;
+            break;
+        case BothMover:
+            break;
+        default:
+            ASSERT(false, "Missing case.");
         }
 
-        if (Pass->staticAll) {
-
-            assert (Area != Top); // can be Bottom!
-
-            switch (m) {
-            case RightMover:
-                if (Area == Post || Area == Bottom) {
-                    insertBlock (I, Static);
-                    Area = Pre;
-                }
-                break;
-            case LeftMover:
-                Area = Post;
-                break;
-            case NoneMover:
-                if (Area == Post) {
-                    insertBlock (I, Static);
-                }
-                Area = Post; // in both cases, everything after I is a post-commit area
-                break;
-            case BothMover:
-                return I; // no mover annotation!
-            default:
-                ASSERT(false, "Missing case.");
-            }
-
-        } else {
-
-            switch (m) {
-            case RightMover:
-                if (Area != Pre || Area == Bottom) {
-                    insertBlock (I, PhaseDynamic);
-                    Area = Top;
-                }
-                break;
-            case LeftMover:
-                if (Area != Post || Area == Bottom) {
-                    insertBlock (I, NoBlock);
-                }
-                Area = Post;
-                break;
-            case NoneMover:
-                if (Area == Pre || Area == Bottom) {
-                    insertBlock (I, NoBlock);
-                } else {
-                    insertBlock (I, CommDynamic);
-                }
-                Area = Post; // in both cases , everything after I is a post-commit area
-                break;
-            case BothMover:
-                return I; // no mover annotation!
-            default:
-                ASSERT(false, "Missing case.");
-            }
-
-        }
-
-        addMetaData (I, MOVER, name(m));
-
-        if (isBlockStart(I) && ThreadF->BlockStarts[I].first == Static) {
-            Area = Bottom;
+        if (m != BothMover) {
+            addMetaData (I, MOVER, name(m));
         }
 
         return I;
@@ -761,7 +684,7 @@ isAtomicIncDec (Instruction *I)
  * where t_x is a function pointer to the thread's functions and
  * { n_xy | y in N } is the set of conflicting blocks in that thread
  */
-void
+bool
 LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
                                   Instruction *I)
 {
@@ -809,74 +732,121 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
                 }
             }
         }
+        if (Blocks.size() == T2->BlockStarts.size()) {
+            return true; // static yield
+        }
+    }
+
+    return false;
+}
+
+static void
+insertYield (LiptonPass::LLVMThread *T, Instruction* I, Function *YieldF, int block, bool HidePost)
+{
+    AllocaInst *Phase = T->PhaseVar;
+    Value *blockId = ConstantInt::get (YieldF->getFunctionType ()->getParamType (0), block);
+
+    if (HidePost) {
+        new StoreInst(PRECOMMIT, Phase, I); // Post --> Pre (temporarily)
+    }
+    CallInst::Create (YieldF, blockId, "", I);
+    if (HidePost) {
+        new StoreInst(POSTCOMMIT, Phase, I); // Pre --> Post (for after I)
     }
 }
 
-enum local_e {
-    Local,
-    Global
-};
-
-static void
-insertYield (Instruction* I, local_e type, int block)
+static TerminatorInst *
+insertDynYield (LiptonPass::LLVMThread* T, Instruction* I, block_e type,
+                int block)
 {
-    Value* blockId = ConstantInt::get (Yield->getFunctionType ()->getParamType (0), block);
+    AllocaInst *Phase = T->PhaseVar;
 
-    switch (type) {
-    case Global:    CallInst::Create (Yield, blockId, "", I);       break;
-    case Local:     CallInst::Create (YieldLocal, blockId, "", I);  break;
+    LoadInst* P = new LoadInst (Phase, "", I);
+    assert(POSTCOMMIT == TRUE);
+    TerminatorInst* ThenTerm;
+    TerminatorInst* ElseTerm;
+    if (type & LoopBlock) {
+        SplitBlockAndInsertIfThenElse (P, I, &ThenTerm, &ElseTerm);
+        insertYield (T, ElseTerm, YieldLocal, block, false);
+    } else {
+        ThenTerm = SplitBlockAndInsertIfThen (P, I, false);
     }
+    insertYield (T, ThenTerm, YieldGlobal, block, true);
+    return ThenTerm;
 }
 
 void
-LiptonPass::dynamicYield (Instruction *I, block_e type, int block)
+LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type,
+                          int block)
 {
     LLASSERT (I2T.find(I) != I2T.end(), "Missed: "<< *I << "\n Block: " << *I->getParent());
-    LLVMThread *T = I2T[I];
     AllocaInst *Phase = T->PhaseVar;
 
-    assert (!staticAll);
-
-    if (!noDyn && type == CommDynamic) {
-        type = PhaseDynamic;
+    if (block == 0) {
+        return;
     }
 
-    Instruction *PhaseCheck = I;
-    TerminatorInst *PostBranch;
-    TerminatorInst *PreBranch;
+    if (type == LoopBlock) {
+        insertYield (T, I, YieldLocal, block, false);
+        return;
+    }
+
     SmallVector<Value*, 8> sv;
-    LoadInst *P;
 
-    switch (type) {
-    case NoBlock:
-        new StoreInst(POSTCOMMIT, Phase, I); // ? --> Post (for after I)
-        break;
-    case Static:
-        insertYield (I, Global, block);
-        break;
-    case StaticLocal:
-        if (block == 0) return;
-        insertYield (I, Local, block);
-        break;
-    case CommDynamic:
-        // First collect conflicting non-movers from other threads
-        conflictingNonMovers (sv, I);
+    pair<area_e, mover_e> &BlockType = T->CommitArea[I];
+    area_e Area = BlockType.first;
+    mover_e Mover = BlockType.second;
 
-        if (!sv.empty()) {
-            // if in dynamic conflict
-            Value *DynConflict = CallInst::Create(Act, sv, "", I);
-            PhaseCheck = SplitBlockAndInsertIfThen (DynConflict, I, false);
+    switch (Mover) {
+    case LeftMover:
+        if (Area != Post) {
+            new StoreInst(POSTCOMMIT, Phase, I);
         }
-        [[clang::fallthrough]]; // fall through (dyn commutativity implies dyn phase):
-    case PhaseDynamic:
-        P = new LoadInst(Phase, "", PhaseCheck);
-        SplitBlockAndInsertIfThenElse (P, PhaseCheck, &PostBranch, &PreBranch);
-        new StoreInst(POSTCOMMIT, Phase, PreBranch); // Pre --> Post (for after I)
-
-        new StoreInst(PRECOMMIT, Phase, PostBranch); // Post --> Pre (temporarily)
-        insertYield (PostBranch, Global, block);
-        new StoreInst(POSTCOMMIT, Phase, PostBranch); // Pre --> Post (for after I)
         break;
+    case RightMover:
+        if (Area == Post) {
+            new StoreInst(PRECOMMIT, Phase, I);
+            insertYield (T, I, YieldGlobal, block, false);
+        } else if (Area == Top) {
+            Instruction *ThenTerm = insertDynYield (T, I, type, block);
+            new StoreInst(PRECOMMIT, Phase, ThenTerm);
+        }
+        break;
+    case NoneMover: {
+        // First collect conflicting non-movers from other threads
+        bool staticNM = conflictingNonMovers (sv, I);
+        assert (!sv.empty());
+
+        // if in dynamic conflict (non-commutativity)
+        Instruction *ConflictTerm = I;
+
+        if (!noDyn && !staticNM) {
+            Value *DynConflict = CallInst::Create(Act, sv, "", I);
+            TerminatorInst* ThenTerm;
+            TerminatorInst* ElseTerm;
+            if (type & LoopBlock) {
+                SplitBlockAndInsertIfThenElse (DynConflict, I, &ThenTerm, &ElseTerm);
+                insertYield (T, ElseTerm, YieldLocal, block, false);
+            } else {
+                ThenTerm = SplitBlockAndInsertIfThen (DynConflict, I, false);
+            }
+            ConflictTerm = ThenTerm;
+        }
+
+        if (Area & Post) {
+
+            if (Area == Top) {
+                insertDynYield (T, ConflictTerm, type, block);
+            }
+
+            insertYield (T, ConflictTerm, YieldGlobal, block, true);
+        } else {
+
+            new StoreInst(POSTCOMMIT, Phase, ConflictTerm);
+        }
+
+        break;
+    }
     default: { ASSERT (false, "Missing case: "<< type); }
     }
 }
@@ -888,7 +858,7 @@ LiptonPass::initialInstrument (Module &M)
     Type *Int = Type::getInt32Ty (M.getContext ());
     Type *Void = FunctionType::getVoidTy (M.getContext ());
     Constant *C = M.getOrInsertFunction (__YIELD, Void, Int, (Type*)(0));
-    Yield = cast<Function> (C);
+    YieldGlobal = cast<Function> (C);
 
 
     Constant *C3 = M.getOrInsertFunction (__YIELD_LOCAL, Void, Int, (Type*)(0));
@@ -901,6 +871,33 @@ LiptonPass::initialInstrument (Module &M)
 }
 
 void
+LiptonPass::staticYield (LLVMThread *T, Instruction *I, block_e type, int block)
+{
+    LLASSERT (I2T.find(I) != I2T.end(), "Missed: "<< *I << "\n Block: " << *I->getParent());
+    AllocaInst *Phase = T->PhaseVar;
+
+    if (block == 0) {
+        return;
+    }
+
+    pair<area_e, mover_e> &BlockType = T->CommitArea[I];
+    area_e Area = BlockType.first;
+    mover_e Mover = BlockType.second;
+
+    if (type == LoopBlock) {
+        insertYield (T, I, YieldLocal, block, false);
+        return;
+    } else {
+        if (Mover == RightMover || Mover == NoneMover) {
+            if (Area & Post) {
+                insertYield (T, I, YieldGlobal, block, false);
+                new StoreInst(PRECOMMIT, Phase, I);
+            }
+        }
+    }
+}
+
+void
 LiptonPass::finalInstrument (Module &M)
 {
     Type *Bool = Type::getInt1Ty (M.getContext());
@@ -910,16 +907,15 @@ LiptonPass::finalInstrument (Module &M)
     POSTCOMMIT = TRUE;
 
     if (staticAll) {
-        for (pair<Function *, LLVMThread *> T : Threads) {
-            for (pair<Instruction *, pair<block_e, int>> X : T.second->BlockStarts) {
-                int block = X.second.second;
-                Instruction *I = X.first;
-                block_e type = X.second.first;
-                assert (type == StaticLocal || type == Static);
+        for (pair<Function *, LLVMThread *> X : Threads) {
+            LLVMThread *T = X.second;
 
-                if (block != 0 && type != NoBlock) {
-                    insertYield (I, type == StaticLocal ? Local : Global, block);
-                }
+            for (pair<Instruction *, pair<block_e, int>> Y : T->BlockStarts) {
+                int block = Y.second.second;
+                Instruction *I = Y.first;
+                block_e type = Y.second.first;
+
+                staticYield (T, I, type, block);
             }
         }
     } else {
@@ -941,7 +937,7 @@ LiptonPass::finalInstrument (Module &M)
                 int block = Y.second.second;
                 Instruction *I = Y.first;
                 block_e type = Y.second.first;
-                dynamicYield (I, type, block);
+                dynamicYield (T, I, type, block);
             }
         }
     }
