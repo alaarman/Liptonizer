@@ -76,21 +76,28 @@ public:
                bool phase);
 
     struct LLVMThread {
+        int                                         index;
+        int                                         Runs;
+
         LLVMThread(Function *F, int i, LiptonPass *Pass)
         :
             Function(*F),
             index(i)
         {
             Aliases = new AliasSetTracker(*AA);
-            Runs = &Pass->Reach->Threads[F];
+            Runs = Pass->Reach->Threads[F].size();
+            for (Instruction *I : Pass->Reach->Threads[F]) {
+                if (Pass->Reach->stCon(I, I)) {
+                    Runs = -1; // potentially infinite
+                }
+            }
         }
 
         DenseMap<Instruction *, pair<block_e, int>> BlockStarts;
         AliasSetTracker                            *Aliases;
         Function                                   &Function;
         AllocaInst                                 *PhaseVar = nullptr;
-        int                                         index;
-        vector<Instruction *>                      *Runs;
+
         DenseMap<Instruction *, pair<area_e, mover_e>>  CommitArea;
 
         DenseMap<BasicBlock *, state_e>             Seen;
@@ -120,7 +127,6 @@ public:
 
     DenseMap<AliasSet *, list<Instruction *>>       AS2I;
     DenseMap<Function *, LLVMThread *>              Threads;
-    DenseMap<Instruction *, LLVMThread *>           I2T;
 
 private:
     Processor                      *handle = nullptr;
@@ -138,7 +144,7 @@ private:
     void walkGraph (Module &M);
 
     bool conflictingNonMovers (SmallVector<Value*, 8> &sv,
-                               Instruction *I);
+                               Instruction *I, LLVMThread *T);
     void initialInstrument (Module &M);
     void finalInstrument (Module &M);
 };

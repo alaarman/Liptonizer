@@ -262,7 +262,7 @@ ReachPass::doFinalization(CallGraph &CG)
 {
     Module &m = CG.getModule();
     Function *main = m.getFunction("main");
-    ASSERT (main, "No main funciton in module");
+    ASSERT (main, "No main function in module");
     Threads[main].push_back((Instruction *)NULL);
     return false; // no modification
 }

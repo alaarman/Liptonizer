@@ -178,7 +178,6 @@ struct Collect : public LiptonPass::Processor {
     Instruction *
     handleCall (CallInst *call)
     {
-        Pass->I2T[call] = ThreadF;
         return call;
     }
 
@@ -223,11 +222,6 @@ struct Collect : public LiptonPass::Processor {
     Instruction *
     process (Instruction *I)
     {
-        LLASSERT (Pass->I2T.find(I) == Pass->I2T.end(),
-                  "Instruction not allow twice in different threads: " << *I);
-
-        Pass->I2T[I] = ThreadF;
-
         if (I->isTerminator() || !I->mayReadOrWriteMemory() ||
                 isa<DbgInfoIntrinsic>(I)) {
             return I;
@@ -329,7 +323,6 @@ struct LockSearch : public LiptonPass::Processor {
     // Access policy: copy-on-write
     PThreadType                    *PT;
 
-    using Processor::Processor;
     ~LockSearch() { }
 
     // block and deblock implement revisiting
@@ -570,11 +563,11 @@ struct Liptonize : public LiptonPass::Processor {
             return BothMover;
         }
 
-        LiptonPass::LLVMThread *T = Pass->I2T[I];
+        LiptonPass::LLVMThread *T = ThreadF;
 
         for (pair<Function *, LiptonPass::LLVMThread *> &X : Pass->Threads) {
             LiptonPass::LLVMThread *T2 = X.second;
-            if (T == T2 && T->Runs->size() == 1)
+            if (T == T2 && T->Runs == 1)
                 continue;
 
             AliasSet *AS = FindAliasSetForUnknownInst (T2->Aliases, I);
@@ -975,12 +968,10 @@ isAtomicIncDec (Instruction *I)
  */
 bool
 LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
-                                  Instruction *I)
+                                  Instruction *I, LLVMThread *T)
 {
     // First collect conflicting non-movers from other threads
-    LLASSERT (I2T.find(I) != I2T.end(), "Missed: "<< *I << "\n Block: " << *I->getParent());
-    LLVMThread *T = I2T[I];
-    unsigned TCount = T->Runs->size();
+    unsigned TCount = T->Runs;
 
     // for all other threads
     for (pair<Function *, LLVMThread *> &Thread : Threads) {
@@ -1068,7 +1059,6 @@ void
 LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type,
                           int block)
 {
-    LLASSERT (I2T.find(I) != I2T.end(), "Missed: "<< *I << "\n Block: " << *I->getParent());
     AllocaInst *Phase = T->PhaseVar;
 
     if (block == 0) {
@@ -1103,7 +1093,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type,
         break;
     case NoneMover: {
         // First collect conflicting non-movers from other threads
-        bool staticNM = conflictingNonMovers (sv, I);
+        bool staticNM = conflictingNonMovers (sv, I, T);
         assert (!sv.empty());
 
         // if in dynamic conflict (non-commutativity)
@@ -1162,7 +1152,6 @@ LiptonPass::initialInstrument (Module &M)
 void
 LiptonPass::staticYield (LLVMThread *T, Instruction *I, block_e type, int block)
 {
-    LLASSERT (I2T.find(I) != I2T.end(), "Missed: "<< *I << "\n Block: " << *I->getParent());
     AllocaInst *Phase = T->PhaseVar;
 
     if (block == 0) {
