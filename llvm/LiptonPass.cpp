@@ -77,6 +77,7 @@ Type                           *Int64 = nullptr;
 
 int                             nextBlock = 0;
 
+static const char *SINGLE_THREADED = "singleThreaded";
 static const char *MOVER = "mover";
 static const char *AREA = "area";
 
@@ -163,20 +164,12 @@ FindAliasSetForUnknownInst(AliasSetTracker *AST, Instruction *Inst)
 
 /**
  * Thread / instruction reachability processor
- * Insert yields in loops.
  *
  * Complexity: P X N
  */
 struct Collect : public LiptonPass::Processor {
 
-    enum state_e {
-        Unvisited = 0,
-        Stacked,
-        Visited,
-    };
-
     static StringRef                Action;
-    DenseMap<BasicBlock *, state_e> Seen;
     vector<BasicBlock *>            Stack;
 
     using Processor::Processor;
@@ -208,12 +201,20 @@ struct Collect : public LiptonPass::Processor {
     bool
     block ( BasicBlock &B )
     {
-        state_e &seen = Seen[&B];
+        state_e &seen = ThreadF->Seen[&B];
         if (Pass->verbose) errs() << Action << ": " << B << seen <<endll;
         if (seen == Unvisited) {
             seen = Stacked;
             Stack.push_back (&B);
             return true;
+        } else if (seen == Stacked || seen == StackedOnLoop) {
+            seen = (state_e) ((int)seen | (int)OnLoop);
+            // mark all on stack s on-loop:
+            for (BasicBlock *B : Stack) {
+                state_e &Flag = ThreadF->Seen[B];
+                if (Flag & OnLoop) break;
+                Flag = (state_e) ((int)Flag | (int)OnLoop);
+            }
         }
         return false;
     }
@@ -221,21 +222,25 @@ struct Collect : public LiptonPass::Processor {
     void
     deblock ( BasicBlock &B )
     {
-        Seen[&B] = Visited;
+        state_e &Flag = ThreadF->Seen[&B];
+        if (Flag & OnLoop) {
+            Flag = VisitedOnLoop;
+        } else {
+            Flag = Visited;
+        }
     }
 
     void
     thread (Function *T)
     {
         ThreadF = Pass->Threads[T];
-        Seen.clear(); // restart with exploration
      }
 
     Instruction *
     process (Instruction *I)
     {
         LLASSERT (Pass->I2T.find(I) == Pass->I2T.end(),
-                  "Instuction not allow twice in different threads: " << *I);
+                  "Instruction not allow twice in different threads: " << *I);
 
         Pass->I2T[I] = ThreadF;
 
@@ -259,6 +264,8 @@ struct Collect : public LiptonPass::Processor {
  * states (area_e). If the search (re)encounters a visited/queud block with
  * a lower phase than it was preciously visited with, it is revisited with the
  * higher order phase and the block boundary is strengthened (made less dynamic).
+ *
+ * Complexity: N * |{Bottom, Pre, Post, Top}| + cost for aliasing analysis
  *
  */
 struct Liptonize : public LiptonPass::Processor {
@@ -285,23 +292,93 @@ struct Liptonize : public LiptonPass::Processor {
         return BothMover;
     }
 
+    typedef pair<const AliasAnalysis::Location *, Instruction *> PTCallType;
+
+    struct PThreadType {
+        PThreadType () {}
+        PThreadType (PThreadType *O) {
+            Locks = O->Locks;
+            Threads = O->Threads;
+            CorrectThreads = O->CorrectThreads;
+        }
+
+        list<PTCallType>            Locks;
+        list<PTCallType>            Threads;
+        bool                        CorrectThreads = true;
+
+
+        static list<PTCallType>::iterator
+        checkAlias (list<PTCallType> &List, const AliasAnalysis::Location *Lock, int &matches)
+        {
+            list<PTCallType>::iterator LastMatch = List.end();
+            list<PTCallType>::iterator It = List.begin();
+            while (It != List.end()) {
+                if (AA->alias(*Lock, *It->first) == AliasAnalysis::MustAlias) {
+                    matches++;
+                    LastMatch = It;
+                }
+                It++;
+            }
+            return LastMatch;
+        }
+
+        static void
+        removeAlias (list<PTCallType> &List, const AliasAnalysis::Location *Lock)
+        {
+            list<PTCallType>::iterator It = List.begin();
+            while (It != List.end()) {
+                if (AA->alias(*Lock, *It->first) == AliasAnalysis::MustAlias) {
+                    List.erase(It);
+                    return;
+                }
+                It++;
+            }
+            assert (false);
+        }
+
+        friend bool
+        operator<=(PThreadType &This, PThreadType &O)
+        {
+            int ignore = 0;
+            for (PTCallType &Call : This.Locks) {
+                if (checkAlias(O.Locks, Call.first, ignore) == O.Locks.end()){
+                    return false;
+                }
+            }
+            if (!O.CorrectThreads) return true;
+            if (!This.CorrectThreads) return false;
+            for (PTCallType &Call : This.Threads) {
+                if (checkAlias(O.Threads, Call.first, ignore) == O.Threads.end()){
+                    return false;
+                }
+            }
+            return true;
+        }
+    };
+
     struct StackElem {
-        StackElem (area_e a, BasicBlock *B)
+        StackElem (area_e a, BasicBlock *B, PThreadType *Old)
         :
             Area(a),
             Seen(a),
-            Block(B)
+            Block(B),
+            PT(Old)
         {  }
         area_e                  Area;
         area_e                  Seen;
         int                     Last = -1;
         BasicBlock             *Block;
+        PThreadType            *PT;
     };
 
     static StringRef                Action;
-    DenseMap<BasicBlock *, int>     Seen;
+    DenseMap<BasicBlock *, pair<int, PThreadType *>>     Seen;
     area_e                          Area = Bottom;
     vector<StackElem>               Stack;
+
+    // Will always point to the one on the top of the stack or an empty struct
+    // Access policy: copy-on-write
+    PThreadType                    *PT;
 
     using Processor::Processor;
     ~Liptonize() { }
@@ -310,45 +387,72 @@ struct Liptonize : public LiptonPass::Processor {
     bool
     block ( BasicBlock &B )
     {
-        int &seen = Seen[&B];
+        pair<int, PThreadType *> &seen = Seen[&B];
 
-        if (seen == 0) {
+
+        errs () << "LOCKS: "<< B.getName()<< endll;
+        for (PTCallType X : PT->Locks) {
+            errs () << *X.second << endll;
+        }
+
+        if (seen.first == 0) {
             if (Pass->verbose) errs() << name(Area)  <<": "<< B << "\n";
-            Stack.push_back ( StackElem(Area, &B) );
-            seen = -Stack.size();
+            Stack.push_back ( StackElem(Area, &B, PT) );
+            seen.first = -Stack.size();
             return true;
         }
 
-        if (seen < 0) { // stack
+        if (seen.first < 0) { // stack
 
             Instruction *firstNonPhi = B.getFirstNonPHI ();
             LLASSERT (firstNonPhi, "No Instruction in " << B);
             insertBlock (firstNonPhi, LoopBlock);
 
-            int Index = -seen - 1;
+            int Index = -seen.first - 1;
             StackElem Previous = Stack[Index];
             if (Previous.Seen < Area) {
                 if (Pass->verbose) errs() << name(Area)  <<" --(revisit)--> "<<  name(Previous.Seen) <<": "<< B << "\n";
 
                 // re-explore: make stack overlap:
                 Previous.Seen = Area;
-                StackElem Next = StackElem (Area, &B);
+                StackElem Next = StackElem (Area, &B, PT);
                 Next.Last = Index;
                 Stack.push_back (Next);
-                seen = -Stack.size(); // update to highest on stack (Next)
+                seen.first = -Stack.size(); // update to highest on stack (Next)
                 return true;
             }
         } else {
-            if (seen < Area) {
-                if (Pass->verbose) errs() << name(Area)  <<" --(revisit)--> "<<  name((area_e)seen) <<": "<< B << "\n";
+            bool check = *seen.second <= *PT;
+            if (!check) {
+                errs () << "No monotonic locking along program paths: "<< B << endll;
+                errs () << "THREADS seen: " << seen.second->CorrectThreads << endll;
+                for (PTCallType X : seen.second->Threads) {
+                    errs () << *X.second << endll;
+                }
+                errs () << "THREADS now: " << PT->CorrectThreads << endll;
+                for (PTCallType X : PT->Threads) {
+                    errs () << *X.second << endll;
+                }
+                errs () << "LOCKS seen: "<< endll;
+                for (PTCallType X : seen.second->Locks) {
+                    errs () << *X.second << endll;
+                }
+                errs () << "LOCKS now: "<< endll;
+                for (PTCallType X : PT->Locks) {
+                    errs () << *X.second << endll;
+                }
+                assert (false);
+            }
+
+            if (seen.first < Area) {
+                if (Pass->verbose) errs() << name(Area)  <<" --(revisit)--> "<<  name((area_e)seen.first) <<": "<< B << "\n";
 
                 // re-explore visited blocks:
-                Stack.push_back ( StackElem(Area, &B) );
-                seen = -Stack.size();
+                Stack.push_back ( StackElem(Area, &B, PT) );
+                seen.first = -Stack.size();
                 return true;
             }
         }
-        //assert (seen < 0 ?  Stack[-seen - 1].Seen >= Area : (area_e &)seen) >= Area);
 
         return false;
     }
@@ -357,14 +461,27 @@ struct Liptonize : public LiptonPass::Processor {
     void
     deblock ( BasicBlock &B )
     {
+        pair<int, PThreadType *> &seen = Seen[&B];
         StackElem &Pop = Stack.back();
-        Area = Pop.Area;
+
+        seen.second = PT;
+
         if (Pop.Last != -1) { // overlapping stacks: revert Seen to underlying
-            Seen[&B] = Pop.Last;
+            seen.first = Pop.Last;
             Stack[Pop.Last].Seen = Pop.Seen;
         } else {
-            Seen[&B] = Pop.Seen;
+            seen.first = Pop.Seen;
         }
+
+        Area = Pop.Area;
+        PT = Pop.PT;
+
+        errs () << "BACK LOCKS: "<< endll;
+        for (PTCallType X : PT->Locks) {
+            errs () << *X.second << endll;
+        }
+
+
         Stack.pop_back();
     }
 
@@ -385,46 +502,124 @@ struct Liptonize : public LiptonPass::Processor {
         assert (b == 0); // start block
 
         Seen.clear();
+
+        PT = new PThreadType(); //TODO: leak?
+
+        errs() << "THREAD: "<< T->getName() << endll;
+    }
+
+    void
+    addPThread (CallInst *Call, const char *str, bool add)
+    {
+        AliasAnalysis::ModRefResult Mask;
+        AliasAnalysis::Location *Lock = new AliasAnalysis::Location(
+                                AA->getArgLocation(Call, 0, Mask));
+
+        int matches = 0;
+
+        if (str == PTHREAD_CREATE || str == PTHREAD_JOIN) {
+            PT->checkAlias (PT->Threads, Lock, matches);
+            if (add) { // PTHREAD_CREATE
+                PT = new PThreadType(PT); // allocate new for search stack
+                PT->Threads.push_back (make_pair (Lock, Call));
+                if (PT->CorrectThreads && matches == 0 && !ThreadF->Loops(Call)) {
+                    PT->CorrectThreads = false;
+                    errs () << "WARNING: Giving up on thread tracking: "<<
+                            *Lock->Ptr << endll << *Call << endll;
+                } else {
+                    errs () << "BEGIN: tracking thread: "<< *Call << endll;
+                }
+            } else { // PTHREAD_JOIN
+                if (matches == 1 && PT->CorrectThreads && !ThreadF->Loops(Call)) {
+                    PT = new PThreadType(PT); // allocate new for search stack
+                    PT->removeAlias (PT->Threads, Lock);
+                    errs () << "END: tracking thread: "<< *Call << endll;
+                } else if (PT->CorrectThreads) {
+                    errs () << "WARNING: Giving up on thread tracking: "<<
+                            *Lock->Ptr << endll << *Call << endll;
+                    PT = new PThreadType(PT); // allocate new for search stack
+                    PT->CorrectThreads = false;
+                }
+            }
+            return;
+        }
+
+        PT->checkAlias (PT->Locks, Lock, matches);
+
+        if (add) {
+            if (matches == 0) {
+                PT = new PThreadType(PT); // allocate new for search stack
+                PT->Locks.push_back (make_pair (Lock, Call));
+                errs () << "BEGIN: tracking lock: "<< *Call << endll;
+            } else {
+                errs () << "WARNING: "<< str <<" pointer overlaps: "<<
+                        *Lock->Ptr << endll << *Call << endll;
+                // Do not add (cannot determine region statically)
+            }
+        } else {
+            if (matches == 1) {
+                PT = new PThreadType(PT); // allocate new for search stack
+                PT->removeAlias (PT->Locks, Lock);
+                errs () << "END: tracking lock: "<< *Call << endll;
+
+
+                errs () << "LOCKS AFTER: "<< endll;
+                for (PTCallType X : PT->Locks) {
+                    errs () << *X.second << endll;
+                }
+            } else {
+                errs () << "WARNING: "<< str <<" pointer not found: "<<
+                        *Lock->Ptr << endll << *Call << endll;
+                PT->Locks.resize(0);
+                // Empty (Cannot determine end of locked region)
+            }
+        }
     }
 
     Instruction *
-    handleCall (CallInst *call)
+    handleCall (CallInst *Call)
     {
-        if (call->getCalledFunction ()->getName ().endswith(PTHREAD_YIELD)) {
-            errs () << "WARNING: pre-existing Yield call: "<< *call <<"\n";
+        if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_YIELD)) {
+            errs () << "WARNING: pre-existing Yield call: "<< *Call <<"\n";
             Area = Bottom;
-        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_LOCK)) {
-            doHandle (call, RightMover);
-        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_RLOCK)) {
-            doHandle (call, RightMover);
-        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_WLOCK)) {
-            doHandle (call, RightMover);
-        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_RW_UNLOCK)) {
-            doHandle (call, LeftMover);
-        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_UNLOCK)) {
-            doHandle (call, LeftMover);
-        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_CREATE)) {
-            Pass->PTCreate.insert (call);
-            doHandle (call, LeftMover);
-        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_JOIN)) {
-            doHandle (call, RightMover);
-        } else if (call->getCalledFunction ()->getName ().endswith(PTHREAD_MUTEX_INIT)) {
+        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_LOCK)) {
+            doHandle (Call, RightMover);
+            addPThread (Call, PTHREAD_LOCK, true);
+        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_RLOCK)) {
+            doHandle (Call, RightMover);
+            addPThread (Call, PTHREAD_RLOCK, true);
+        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_WLOCK)) {
+            doHandle (Call, RightMover);
+            addPThread (Call, PTHREAD_WLOCK, true);
+        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_RW_UNLOCK)) {
+            doHandle (Call, LeftMover);
+            addPThread (Call, PTHREAD_RW_UNLOCK, false);
+        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_UNLOCK)) {
+            doHandle (Call, LeftMover);
+            addPThread (Call, PTHREAD_UNLOCK, false);
+        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_CREATE)) {
+            doHandle (Call, LeftMover);
+            addPThread (Call, PTHREAD_CREATE, true);
+        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_JOIN)) {
+            doHandle (Call, RightMover);
+            addPThread (Call, PTHREAD_JOIN, false);
+        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_MUTEX_INIT)) {
 
-        } else if (call->getCalledFunction ()->getName ().endswith(ATOMIC_BEGIN)) {
+        } else if (Call->getCalledFunction ()->getName ().endswith(ATOMIC_BEGIN)) {
             // merge statements in atomic block and only yield afterwards
-            Instruction *Next = call;
+            Instruction *Next = Call;
             mover_e m = followBlock (&Next);
             doHandle (Next, m);
             return Next;
-        } else if (call->getCalledFunction ()->getName ().endswith(ATOMIC_END)) {
+        } else if (Call->getCalledFunction ()->getName ().endswith(ATOMIC_END)) {
 
-        } else if (call->getCalledFunction ()->getName ().endswith("__assert_rtn")) {
-        } else if (call->getCalledFunction ()->getName ().endswith("__assert")) {
+        } else if (Call->getCalledFunction ()->getName ().endswith("__assert_rtn")) {
+        } else if (Call->getCalledFunction ()->getName ().endswith("__assert")) {
 
         } else {
             return nullptr;
         }
-        return call;
+        return Call;
     }
 
     Instruction *
@@ -457,6 +652,9 @@ private:
         addMetaData (I, AREA, name(Area));
         if (m != BothMover) {
             addMetaData (I, MOVER, name(m));
+        }
+        if (singleThreaded(I)) {
+            addMetaData (I, SINGLE_THREADED, "");
         }
 
         switch (m) {
@@ -517,10 +715,7 @@ private:
     bool
     singleThreaded (Instruction *I)
     {
-        // avoid yield where there is no parallelism TODO: overestimation
-        return ThreadF->Function.getName().equals("main") &&
-               Pass->PTCreate.empty ();
-        // TODO: remove limitation of necessary function inlining
+        return PT->Threads.empty();
     }
 
 
@@ -559,7 +754,6 @@ private:
         ThreadF->BlockStarts[I] = make_pair (yieldType, blockID);
         return blockID;
     }
-
 };
 
 StringRef Collect::Action = "Collecting";

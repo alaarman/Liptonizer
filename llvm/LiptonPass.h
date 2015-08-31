@@ -48,6 +48,18 @@ enum area_e {
     Top     = Pre | Post    //
 };
 
+enum state_e {
+    Unvisited   = 0,
+    Stacked     = 1,
+    Visited     = 2,
+
+    OnLoop          = 1 << 10,
+    StackedOnLoop   = Stacked | OnLoop,
+    VisitedOnLoop   = Visited | OnLoop,
+};
+
+static AliasAnalysis                  *AA;
+
 class LiptonPass : public ModulePass {
 
 public:
@@ -57,7 +69,6 @@ public:
     bool                staticAll;  // no phase && dynamic commutativity
     bool                noDyn;      // no dynamic commutativity
 
-    AliasAnalysis                  *AA = nullptr;
     ReachPass                      *Reach = nullptr;
 
     LiptonPass();
@@ -70,7 +81,7 @@ public:
             Function(*F),
             index(i)
         {
-            Aliases = new AliasSetTracker(*Pass->AA);
+            Aliases = new AliasSetTracker(*AA);
             Runs = &Pass->Reach->Threads[F];
         }
 
@@ -81,6 +92,14 @@ public:
         int                                         index;
         vector<Instruction *>                      *Runs;
         DenseMap<Instruction *, pair<area_e, mover_e>>  CommitArea;
+
+        DenseMap<BasicBlock *, state_e>             Seen;
+
+        bool
+        Loops (Instruction *I)
+        {
+            return Seen[I->getParent()] & OnLoop;
+        }
     };
 
     struct Processor {
@@ -99,11 +118,9 @@ public:
         int     insertBlock (Instruction *I, block_e type);
     };
 
-    //AliasSetTracker                            *AST;
-    DenseSet<Instruction *>                     PTCreate;
-    DenseMap<AliasSet *, list<Instruction *>>   AS2I;
-    DenseMap<Function *, LLVMThread *>          Threads;
-    DenseMap<Instruction *, LLVMThread *>         I2T;
+    DenseMap<AliasSet *, list<Instruction *>>       AS2I;
+    DenseMap<Function *, LLVMThread *>              Threads;
+    DenseMap<Instruction *, LLVMThread *>           I2T;
 
 private:
     Processor                      *handle = nullptr;
