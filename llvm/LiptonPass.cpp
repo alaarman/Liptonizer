@@ -1129,37 +1129,24 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
 }
 
 static void
-insertYield (LLVMThread *T, Instruction* I, Function *YieldF, int block, bool HidePost)
+insertYield (Instruction* I, Function *YieldF, int block)
 {
-    AllocaInst *Phase = T->PhaseVar;
     Value *blockId = ConstantInt::get (YieldF->getFunctionType ()->getParamType (0), block);
 
-    if (HidePost) {
-        new StoreInst(PRECOMMIT, Phase, I); // Post --> Pre (temporarily)
-    }
     CallInst::Create (YieldF, blockId, "", I);
-    if (HidePost) {
-        new StoreInst(POSTCOMMIT, Phase, I); // Pre --> Post (for after I)
-    }
 }
 
 static TerminatorInst *
-insertDynYield (LLVMThread* T, Instruction* I, block_e type,
-                int block)
+insertDynYield (Instruction* I, Instruction *Cond, block_e type, int block)
 {
-    AllocaInst *Phase = T->PhaseVar;
-
-    LoadInst* P = new LoadInst (Phase, "", I);
-    assert(POSTCOMMIT == TRUE);
     TerminatorInst* ThenTerm;
     TerminatorInst* ElseTerm;
     if (type & LoopBlock) {
-        SplitBlockAndInsertIfThenElse (P, I, &ThenTerm, &ElseTerm);
-        insertYield (T, ElseTerm, YieldLocal, block, false);
+        SplitBlockAndInsertIfThenElse (Cond, I, &ThenTerm, &ElseTerm);
+        insertYield (ElseTerm, YieldLocal, block);
     } else {
-        ThenTerm = SplitBlockAndInsertIfThen (P, I, false);
+        ThenTerm = SplitBlockAndInsertIfThen (Cond, I, false);
     }
-    insertYield (T, ThenTerm, YieldGlobal, block, true);
     return ThenTerm;
 }
 
@@ -1169,12 +1156,13 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type,
 {
     AllocaInst *Phase = T->PhaseVar;
 
+    assert(POSTCOMMIT == TRUE);
+
     if (block == 0) {
         return;
     }
-
     if (type == LoopBlock) {
-        insertYield (T, I, YieldLocal, block, false);
+        insertYield (I, YieldLocal, block);
         return;
     }
 
@@ -1185,6 +1173,10 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type,
     mover_e Mover = LI.Mover;
 
     if (LI.Atomic) { // no yields, just bookkeep phase
+
+        if (type & LoopBlock) { // highest change for still catch a Pre phase
+            insertYield (I, YieldLocal, block);
+        }
 
         switch (Mover) {
         case LeftMover:
@@ -1207,31 +1199,28 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type,
             new StoreInst(POSTCOMMIT, Phase, ThenTerm);
             break;
         }
-        default: { ASSERT (false, "Missing case: "<< type); }
+        default: { ASSERT (false, "Missing case: "<< Mover); }
         }
 
-        if (type & LoopBlock) {
-            insertYield (T, I, YieldLocal, block, false);
-        }
         return;
     }
 
     switch (Mover) {
     case LeftMover:
-        if (Area != Post) {
+        if (type & LoopBlock)
+            insertYield (I, YieldLocal, block);
+        if (Area != Post)
             new StoreInst(POSTCOMMIT, Phase, I);
-        }
-        if (type & LoopBlock) {
-            insertYield (T, I, YieldLocal, block, false);
-        }
         break;
     case RightMover:
         if (Area == Post) {
             new StoreInst(PRECOMMIT, Phase, I);
-            insertYield (T, I, YieldGlobal, block, false);
+            insertYield (I, YieldGlobal, block);
         } else if (Area == Top) {
-            Instruction *ThenTerm = insertDynYield (T, I, type, block);
+            LoadInst *P = new LoadInst (Phase, "", I);
+            Instruction *ThenTerm = insertDynYield (I, P, type, block);
             new StoreInst(PRECOMMIT, Phase, ThenTerm);
+            insertYield (ThenTerm, YieldGlobal, block);
         }
         break;
     case NoneMover: {
@@ -1240,36 +1229,32 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type,
         assert (!sv.empty());
 
         // if in dynamic conflict (non-commutativity)
-        Instruction *ConflictTerm = I;
-
+        Instruction *NextTerm = I;
         if (!noDyn && !staticNM) {
-            Value *DynConflict = CallInst::Create(Act, sv, "", I);
-            TerminatorInst* ThenTerm;
-            TerminatorInst* ElseTerm;
-            if (type & LoopBlock) {
-                SplitBlockAndInsertIfThenElse (DynConflict, I, &ThenTerm, &ElseTerm);
-                insertYield (T, ElseTerm, YieldLocal, block, false);
-            } else {
-                ThenTerm = SplitBlockAndInsertIfThen (DynConflict, I, false);
-            }
-            ConflictTerm = ThenTerm;
+            CallInst *ActCall = CallInst::Create(Act, sv, "", NextTerm);
+            NextTerm = insertDynYield (NextTerm, ActCall, type, block);
         }
-
-        if (Area & Post) {
-
-            if (Area == Top) {
-                insertDynYield (T, ConflictTerm, type, block);
-            }
-
-            insertYield (T, ConflictTerm, YieldGlobal, block, true);
-        } else {
-
-            new StoreInst(POSTCOMMIT, Phase, ConflictTerm);
+        switch (Area) {
+        case Top: {
+            LoadInst *P = new LoadInst (Phase, "", NextTerm);
+            Instruction *PhaseTerm = insertDynYield (NextTerm, P, type, block);
+            new StoreInst(PRECOMMIT, Phase, PhaseTerm); // Temporarily for yield
+            insertYield (PhaseTerm, YieldGlobal, block);
+            // in NextTerm:
+            new StoreInst(POSTCOMMIT, Phase, NextTerm);
+            break; }
+        case Post:
+            insertYield (NextTerm, YieldGlobal, block); // fallthrough:
+        case Pre:
+        case Bottom:
+            new StoreInst(POSTCOMMIT, Phase, NextTerm);
+            break;
+        default: { ASSERT (false, "Missing case: "<< Area); }
         }
 
         break;
     }
-    default: { ASSERT (false, "Missing case: "<< type); }
+    default: { ASSERT (false, "Missing case: "<< Mover); }
     }
 }
 
@@ -1295,24 +1280,23 @@ LiptonPass::initialInstrument (Module &M)
 void
 LiptonPass::staticYield (LLVMThread *T, Instruction *I, block_e type, int block)
 {
-    AllocaInst *Phase = T->PhaseVar;
-
     if (block == 0) {
         return;
     }
 
-    LLVMInstr &BlockType = T->Instructions[I];
-    area_e Area = BlockType.Area;
-    mover_e Mover = BlockType.Mover;
+    LLVMInstr &LI = T->Instructions[I];
+    area_e Area = LI.Area;
+    mover_e Mover = LI.Mover;
 
     if (type == LoopBlock) {
-        insertYield (T, I, YieldLocal, block, false);
+        insertYield (I, YieldLocal, block);
         return;
     } else {
         if (Mover == RightMover || Mover == NoneMover) {
             if (Area & Post) {
-                insertYield (T, I, YieldGlobal, block, false);
-                new StoreInst(PRECOMMIT, Phase, I);
+                if (!LI.Atomic) {
+                    insertYield (I, YieldGlobal, block);
+                }
             }
         }
     }
