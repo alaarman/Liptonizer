@@ -142,16 +142,18 @@ LiptonPass::LiptonPass () : ModulePass(ID),
         verbose(true),
         staticAll(false),
         noDyn(false),
+        NoLock(false),
         Reach (nullptr)
 { }
 
 LiptonPass::LiptonPass (ReachPass &RP, string name, bool v, bool staticBlocks,
-                        bool phase)
+                        bool phase, bool nolock)
                                                             : ModulePass(ID),
         Name (name),
         verbose(v),
         staticAll(staticBlocks),
         noDyn(phase),
+        NoLock(nolock),
         Reach (&RP)
 { }
 
@@ -565,11 +567,12 @@ struct LockSearch : public LiptonPass::Processor {
     void
     addPThread (CallInst *Call, pt_e kind, bool add)
     {
-        AliasAnalysis::ModRefResult Mask;
-        AliasAnalysis::Location *Lock = new AliasAnalysis::Location(
-                                AA->getArgLocation(Call, 0, Mask));
-
+        if (Pass->NoLock) return;
         if (kind == ThreadStart && !PT->CorrectThreads) return; // nothing to do
+
+        AliasAnalysis::ModRefResult Mask;
+                AliasAnalysis::Location *Lock = new AliasAnalysis::Location(
+                                        AA->getArgLocation(Call, 0, Mask));
 
         int matches = PT->findAlias (kind, Lock);
         if (add) {
