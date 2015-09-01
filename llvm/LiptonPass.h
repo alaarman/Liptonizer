@@ -98,6 +98,7 @@ struct LLVMInstr {
     area_e          Area    = Unknown;
     mover_e         Mover   = UnknownMover;
     bool            Atomic  = false;
+    bool            Loops   = false;
     PThreadType    *PT      = nullptr;
 
     bool
@@ -110,13 +111,12 @@ struct LLVMInstr {
 struct LLVMThread {
     Function                                   &F;
     int                                         index;
-    int                                         Runs;
+    int                                         Runs = -2;
 
-    LLVMThread(Function *F, int i, int Instances)
+    LLVMThread(Function *F, int i)
     :
         F(*F),
-        index(i),
-        Runs(Instances)
+        index(i)
     {
         Aliases = new AliasSetTracker(*AA);
     }

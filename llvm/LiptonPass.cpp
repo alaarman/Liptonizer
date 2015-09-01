@@ -172,6 +172,7 @@ LiptonPass::Processor::isBlockStart (Instruction *I)
 bool
 LLVMThread::isSingleton ()
 {
+    assert (Runs != -2);
     return Runs == 1;
 }
 
@@ -208,18 +209,18 @@ checkAlias (list<PTCallType> &List, const AliasAnalysis::Location *Lock)
     return matches;
 }
 
-static void
+static bool
 removeAlias (list<PTCallType> &List, const AliasAnalysis::Location *Lock)
 {
     list<PTCallType>::iterator It = List.begin();
     while (It != List.end()) {
         if (AA->alias(*Lock, *It->first) == AliasAnalysis::MustAlias) {
             List.erase(It);
-            return;
+            return true;
         }
         It++;
     }
-    assert (false);
+    return false;
 }
 
 static void
@@ -261,9 +262,9 @@ struct Collect : public LiptonPass::Processor {
     ~Collect() { }
 
     Instruction *
-    handleCall (CallInst *call)
+    handleCall (CallInst *Call)
     {
-        return call;
+        return Call;
     }
 
     bool
@@ -293,6 +294,9 @@ struct Collect : public LiptonPass::Processor {
         state_e &Flag = Seen[&B];
         if (Flag & OnLoop) {
             Flag = VisitedOnLoop;
+            for (Instruction &I : B) {
+                ThreadF->Instructions[&I].Loops = true;
+            }
         } else {
             Flag = Visited;
         }
@@ -379,8 +383,6 @@ PThreadType::locks ()
     return !ReadLocks.empty() || !WriteLocks.empty();
 }
 
-
-
 int
 PThreadType::findAlias (pt_e kind, const AliasAnalysis::Location *Lock)
 {
@@ -403,12 +405,13 @@ PThreadType::missed (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *C
     PThreadType *PT = new PThreadType(this);
     if (kind == ThreadStart) {
         PT->CorrectThreads = false;
-    } else if (kind == ReadLock) {
-        PT->ReadLocks.resize (0);
-    } else if (kind == TotalLock || kind == AnyLock) {
-        PT->WriteLocks.resize (0);
     } else {
-        assert (false);
+        if (kind & ReadLock) {
+            PT->ReadLocks.resize (0);
+        }
+        if (kind & TotalLock) {
+            PT->WriteLocks.resize (0);
+        }
     }
     return PT;
 }
@@ -420,10 +423,15 @@ PThreadType::eraseAlias (pt_e kind, const AliasAnalysis::Location *Lock, CallIns
     PThreadType *PT = new PThreadType(this);
     if (kind == ThreadStart) {
         removeAlias (PT->Threads, Lock);
-    } else if (kind == ReadLock) {
-        removeAlias (PT->ReadLocks, Lock);
-    } else if (kind == TotalLock || kind == AnyLock) {
-        removeAlias (PT->WriteLocks, Lock);
+    } else {
+        int count = 0;
+        if (kind & ReadLock) {
+            count += removeAlias (PT->ReadLocks, Lock);
+        }
+        if (kind & TotalLock) {
+            count += removeAlias (PT->WriteLocks, Lock);
+        }
+        assert (count == 1);
     }
     return PT;
 }
@@ -484,7 +492,7 @@ struct LockSearch : public LiptonPass::Processor {
 
     struct LockVisited {
         state_e             State = Unvisited;
-        PThreadType        *PT;
+        PThreadType        *PT = nullptr;
     };
 
     DenseMap<BasicBlock *, LockVisited>     Seen;
@@ -498,14 +506,10 @@ struct LockSearch : public LiptonPass::Processor {
     bool
     block ( BasicBlock &B )
     {
-
         LockVisited &V = Seen[&B];
 
         if (V.State != Unvisited && *V.PT <= *PT) {
             return false;
-        }
-
-        if (Pass->verbose) {
         }
         if (Pass->verbose) errs() << B << "\n";
 
@@ -568,7 +572,6 @@ struct LockSearch : public LiptonPass::Processor {
         if (kind == ThreadStart && !PT->CorrectThreads) return; // nothing to do
 
         int matches = PT->findAlias (kind, Lock);
-
         if (add) {
             if (matches == 0) {
                 PT = PT->add (kind, Lock, Call);
@@ -592,6 +595,7 @@ struct LockSearch : public LiptonPass::Processor {
         if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_YIELD)) {
         } else if (Call->getCalledFunction ()->getName ().endswith("__assert_rtn")) {
         } else if (Call->getCalledFunction ()->getName ().endswith("__assert")) {
+        } else if (Call->getCalledFunction ()->getName ().endswith("llvm.expect.i64")) {
         } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_LOCK)) {
             addPThread (Call, TotalLock, true);
         } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_RLOCK)) {
@@ -618,8 +622,6 @@ struct LockSearch : public LiptonPass::Processor {
         } else {
             return nullptr;
         }
-
-
         return Call;
     }
 
@@ -638,7 +640,7 @@ private:
         LLVMInstr &LI = ThreadF->Instructions[I];
         LI.Atomic = PT->Atomic;
         if (I->mayWriteToMemory()) {
-            LI.PT = new PThreadType(LI.PT);
+            LI.PT = new PThreadType(PT);
             LI.PT->ReadLocks.resize (0);
         } else {
             LI.PT = PT;
@@ -807,7 +809,7 @@ struct Liptonize : public LiptonPass::Processor {
         } else if (Call->getCalledFunction ()->getName ().endswith(ATOMIC_END)) {
         } else if (Call->getCalledFunction ()->getName ().endswith("__assert_rtn")) {
         } else if (Call->getCalledFunction ()->getName ().endswith("__assert")) {
-
+        } else if (Call->getCalledFunction ()->getName ().endswith("llvm.expect.i64")) {
         } else {
             return nullptr;
         }
@@ -890,6 +892,7 @@ private:
         LLVMThread *T = ThreadF;
 
         PThreadType *PT = nullptr; // will store lock set if necessary
+        assert (LI.PT != nullptr);
 
         for (pair<Function *, LLVMThread *> &X : Pass->Threads) {
             LLVMThread *T2 = X.second;
@@ -916,7 +919,7 @@ private:
                     }
                 }
 
-                if (!PT->locks()) {
+                if (PT == nullptr || !PT->locks()) {
                     return NoneMover;
                 }
             }
@@ -970,6 +973,7 @@ private:
 
 StringRef Collect::Action = "Collecting";
 StringRef  Liptonize::Action = "Liptonizing";
+StringRef  LockSearch::Action = "LockSearching";
 
 void
 LiptonPass::walkGraph ( Instruction *I )
@@ -1030,24 +1034,13 @@ LiptonPass::walkGraph (Module &M)
     ProcessorT processor(this);
     handle = &processor;
 
-    errs () <<" -------------------- "<< typeid(ProcessorT).name()<<" -------------------- "<< endll;
+    errs () <<" -------------------- "<< typeid(ProcessorT).name() <<" -------------------- "<< endll;
     for (pair<Function *, vector<Instruction *>> &X : Reach->Threads) {
         Function *T = X.first;
 
         // Create new LLVM thread if it doesn't exist
         if (Threads.find(T) == Threads.end()) {
-
-            int Runs = Reach->Threads[T].size();
-            for (Instruction *I : Reach->Threads[T]) {
-                if (I == nullptr) break; // MAIN
-                if (Reach->stCon(I, I)) {
-                    Runs = -1; // potentially infinite
-                    errs () <<"THREAD: "<< T->getName() << " (Potentially infinite)"<< endll;
-                    break;
-                }
-            }
-
-            Threads[T] = new LLVMThread(T, Threads.size(), Runs);
+            Threads[T] = new LLVMThread(T, Threads.size());
         }
         processor.thread (T);
         walkGraph (*T);
@@ -1373,9 +1366,6 @@ LiptonPass::runOnModule (Module &M)
 {
     AA = &getAnalysis<AliasAnalysis> ();
 
-    // Add '__act' and '__yield' function definitions
-    initialInstrument (M);
-
     // Statically find instructions for which invariantly a lock is held
     walkGraph<LockSearch> (M);
 
@@ -1383,9 +1373,29 @@ LiptonPass::runOnModule (Module &M)
     // Collect movability info
     walkGraph<Collect> (M);
 
+    for (pair<Function *, vector<Instruction *>> &X : Reach->Threads) {
+        Function *T = X.first;
+        LLVMThread *TT = Threads[T];
+
+        TT->Runs = Reach->Threads[T].size();
+        for (Instruction *I : Reach->Threads[T]) {
+            if (I == nullptr) break; // MAIN
+            if (TT->Instructions[I].Loops) {
+                TT->Runs = -1; // potentially infinite
+                errs () <<"THREAD: "<< T->getName() << " (Potentially infinite)"<< endll << *I << endll;
+                break;
+            }
+        }
+    }
+
     // Identify and number blocks statically
     // (assuming all dynamic non-movers are static non-movers)
     walkGraph<Liptonize> (M);
+
+    errs () <<" -------------------- "<< "Instrumentation" <<" -------------------- "<< endll;
+
+    // Add '__act' and '__yield' function definitions
+    initialInstrument (M);
 
     // Insert dynamic yields
     finalInstrument (M);
