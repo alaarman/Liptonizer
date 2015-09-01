@@ -34,48 +34,71 @@ enum block_e {
 };
 
 enum mover_e {
-    NoneMover   = 1,
-    RightMover  = 2,
-    LeftMover   = 3,
-    BothMover   = 4,
+    UnknownMover= -1,
+    NoneMover   = 0,
+    RightMover  = 1<<0,
+    LeftMover   = 1<<1,
+    BothMover   = LeftMover | RightMover,
 };
 
 // > 0 for Seen map
 enum area_e {
+    Unknown = 0,
     Bottom  = 1<<0,         // Think both-mover paths before/after static yields
     Pre     = 1<<1,         //
     Post    = 1<<2,         //
     Top     = Pre | Post    //
 };
 
+enum pt_e {
+    ReadLock    = 1 << 0,
+    TotalLock   = 1 << 1,
+    ThreadStart = 1 << 2,
+    AnyLock     = ReadLock | TotalLock
+};
 
 static AliasAnalysis                  *AA;
 
 
-typedef pair<const AliasAnalysis::Location *, Instruction *> PTCallType;
+typedef pair<const AliasAnalysis::Location *, CallInst *> PTCallType;
 
+// Copy-on-write (COW)
 struct PThreadType {
     PThreadType () {}
     PThreadType (PThreadType *O) {
-        Locks = O->Locks;
+        ReadLocks = O->ReadLocks;
+        WriteLocks = O->WriteLocks;
         Threads = O->Threads;
         CorrectThreads = O->CorrectThreads;
     }
 
-    list<PTCallType>            Locks;
+    list<PTCallType>            WriteLocks;
+    list<PTCallType>            ReadLocks;
     list<PTCallType>            Threads;
     bool                        CorrectThreads = true;
     bool                        Atomic = false;
 
 public:
     bool operator<=(PThreadType &O);
+    void print (bool read, bool write, bool threads);
+    bool locks  ();
+
+    PThreadType *overlap(pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call);
+    PThreadType *add    (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call);
+    PThreadType *missed (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call);
+    PThreadType *eraseAlias     (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call);
+
+    // exception to COW (used to reduce lock set candidates):
+    void eraseNonAlias  (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call);
+
+    int  findAlias   (pt_e kind, const AliasAnalysis::Location *Lock);
 };
 
 struct LLVMInstr {
-    area_e          Area = (area_e)-1;
-    mover_e         Mover = (mover_e)-1;
-    bool            Atomic = false;
-    PThreadType    *PT = nullptr;
+    area_e          Area    = Unknown;
+    mover_e         Mover   = UnknownMover;
+    bool            Atomic  = false;
+    PThreadType    *PT      = nullptr;
 
     bool
     singleThreaded ()
@@ -103,11 +126,7 @@ struct LLVMThread {
     AllocaInst                                 *PhaseVar = nullptr;
     DenseMap<Instruction *, LLVMInstr>          Instructions;
 
-    bool
-    isSingleton ()
-    {
-        return Runs == 1;
-    }
+    bool isSingleton ();
 };
 
 class LiptonPass : public ModulePass {
@@ -142,6 +161,7 @@ public:
         virtual void thread (Function *F) {}
         virtual bool block (BasicBlock &B) { return false; }
         virtual void deblock (BasicBlock &B) {  }
+        bool isBlockStart (Instruction *I);
     };
 
 private:
