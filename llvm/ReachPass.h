@@ -44,6 +44,7 @@ public:
     void printClosure();
     bool doFinalization(CallGraph &CG);
     bool stCon (Instruction *S, Instruction *T);
+    bool stCon (BasicBlock *S, BasicBlock *T);
 
 private:
     int sccNum = 0;

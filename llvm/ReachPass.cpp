@@ -287,6 +287,12 @@ ReachPass::stCon (Instruction *S, Instruction *T)
     return instrQuotient.stCon(S, T);
 }
 
+bool
+ReachPass::stCon (BasicBlock *S, BasicBlock *T)
+{
+    return blockQuotient.stCon(S, T);
+}
+
 void
 ReachPass::printNode (CallGraphNode* const node, CallGraphSCC& SCC)
 {
