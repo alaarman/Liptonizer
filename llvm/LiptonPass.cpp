@@ -162,6 +162,46 @@ FindAliasSetForUnknownInst(AliasSetTracker *AST, Instruction *Inst)
     return nullptr;
 }
 
+static int
+checkAlias (list<PTCallType> &List, const AliasAnalysis::Location *Lock)
+{
+    int matches = 0;
+    for (PTCallType &Loc : List) {
+        llvm::AliasAnalysis::AliasResult Alias = AA->alias (*Lock, *Loc.first);
+        if (Alias != AliasAnalysis::NoAlias) {
+            return -1;
+        }
+        if (Alias == AliasAnalysis::MustAlias) {
+            matches++;
+        }
+    }
+    return matches;
+}
+
+static void
+removeAlias (list<PTCallType> &List, const AliasAnalysis::Location *Lock)
+{
+    list<PTCallType>::iterator It = List.begin();
+    while (It != List.end()) {
+        if (AA->alias(*Lock, *It->first) == AliasAnalysis::MustAlias) {
+            List.erase(It);
+            return;
+        }
+        It++;
+    }
+    assert (false);
+}
+
+enum state_e {
+    Unvisited   = 0,
+    Stacked     = 1,
+    Visited     = 2,
+
+    OnLoop          = 1 << 10,
+    StackedOnLoop   = Stacked | OnLoop,
+    VisitedOnLoop   = Visited | OnLoop,
+};
+
 /**
  * Thread / instruction reachability processor
  *
@@ -170,9 +210,11 @@ FindAliasSetForUnknownInst(AliasSetTracker *AST, Instruction *Inst)
 struct Collect : public LiptonPass::Processor {
 
     static StringRef                Action;
-    vector<BasicBlock *>            Stack;
 
-    using Processor::Processor;
+    vector<BasicBlock *>                        Stack;
+    DenseMap<BasicBlock *, state_e>             Seen;
+
+    Collect(LiptonPass *Pass) : LiptonPass::Processor(Pass) { }
     ~Collect() { }
 
     Instruction *
@@ -184,7 +226,7 @@ struct Collect : public LiptonPass::Processor {
     bool
     block ( BasicBlock &B )
     {
-        state_e &seen = ThreadF->Seen[&B];
+        state_e &seen = Seen[&B];
         if (Pass->verbose) errs() << Action << ": " << B << seen <<endll;
         if (seen == Unvisited) {
             seen = Stacked;
@@ -194,7 +236,7 @@ struct Collect : public LiptonPass::Processor {
             seen = (state_e) ((int)seen | (int)OnLoop);
             // mark all on stack s on-loop:
             for (BasicBlock *B : Stack) {
-                state_e &Flag = ThreadF->Seen[B];
+                state_e &Flag = Seen[B];
                 if (Flag & OnLoop) break;
                 Flag = (state_e) ((int)Flag | (int)OnLoop);
             }
@@ -205,7 +247,7 @@ struct Collect : public LiptonPass::Processor {
     void
     deblock ( BasicBlock &B )
     {
-        state_e &Flag = ThreadF->Seen[&B];
+        state_e &Flag = Seen[&B];
         if (Flag & OnLoop) {
             Flag = VisitedOnLoop;
         } else {
@@ -217,7 +259,8 @@ struct Collect : public LiptonPass::Processor {
     thread (Function *T)
     {
         ThreadF = Pass->Threads[T];
-     }
+        Seen.clear();
+    }
 
     Instruction *
     process (Instruction *I)
@@ -235,102 +278,56 @@ struct Collect : public LiptonPass::Processor {
     }
 };
 
+bool
+PThreadType::operator<=(PThreadType &O)
+{
+    for (PTCallType &Call : Locks) {
+        if (checkAlias(O.Locks, Call.first) != 1) {
+            return false;
+        }
+    }
+    if (!O.CorrectThreads) return true;
+    if (!CorrectThreads) return false;
+    for (PTCallType &Call : Threads) {
+        if (checkAlias(O.Threads, Call.first) != 1) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /**
  * Find paths where locks are held
  */
 struct LockSearch : public LiptonPass::Processor {
 
-    typedef pair<const AliasAnalysis::Location *, Instruction *> PTCallType;
-
-    struct PThreadType {
-        PThreadType () {}
-        PThreadType (PThreadType *O) {
-            Locks = O->Locks;
-            Threads = O->Threads;
-            CorrectThreads = O->CorrectThreads;
-        }
-
-        list<PTCallType>            Locks;
-        list<PTCallType>            Threads;
-        bool                        CorrectThreads = true;
-
-
-        static list<PTCallType>::iterator
-        checkAlias (list<PTCallType> &List, const AliasAnalysis::Location *Lock, int &matches)
-        {
-            list<PTCallType>::iterator LastMatch = List.end();
-            list<PTCallType>::iterator It = List.begin();
-            while (It != List.end()) {
-                if (AA->alias(*Lock, *It->first) == AliasAnalysis::MustAlias) {
-                    matches++;
-                    LastMatch = It;
-                }
-                It++;
-            }
-            return LastMatch;
-        }
-
-        static void
-        removeAlias (list<PTCallType> &List, const AliasAnalysis::Location *Lock)
-        {
-            list<PTCallType>::iterator It = List.begin();
-            while (It != List.end()) {
-                if (AA->alias(*Lock, *It->first) == AliasAnalysis::MustAlias) {
-                    List.erase(It);
-                    return;
-                }
-                It++;
-            }
-            assert (false);
-        }
-
-        friend bool
-        operator<=(PThreadType &This, PThreadType &O)
-        {
-            int ignore = 0;
-            for (PTCallType &Call : This.Locks) {
-                if (checkAlias(O.Locks, Call.first, ignore) == O.Locks.end()){
-                    return false;
-                }
-            }
-            if (!O.CorrectThreads) return true;
-            if (!This.CorrectThreads) return false;
-            for (PTCallType &Call : This.Threads) {
-                if (checkAlias(O.Threads, Call.first, ignore) == O.Threads.end()){
-                    return false;
-                }
-            }
-            return true;
-        }
-    };
-
-    struct StackElem {
-        StackElem (BasicBlock *B, PThreadType *Old)
-        :
-            Block(B),
-            PT(Old)
-        {  }
-        int                     Last = -1;
-        BasicBlock             *Block;
-        PThreadType            *PT;
-    };
-
     static StringRef                Action;
-    DenseMap<BasicBlock *, pair<int, PThreadType *>>     Seen;
-    vector<StackElem>               Stack;
+
+    LockSearch(LiptonPass *Pass) : LiptonPass::Processor(Pass) { }
+    ~LockSearch() {}
+
+    struct LockVisited {
+        state_e             State = Unvisited;
+        PThreadType        *PT;
+    };
+
+    DenseMap<BasicBlock *, LockVisited>     Seen;
+    vector<BasicBlock *>                    Stack;
 
     // Will always point to the one on the top of the stack or an empty struct
     // Access policy: copy-on-write
-    PThreadType                    *PT;
-
-    ~LockSearch() { }
+    PThreadType                    *PT = nullptr;
 
     // block and deblock implement revisiting
     bool
     block ( BasicBlock &B )
     {
-        pair<int, PThreadType *> &seen = Seen[&B];
 
+        LockVisited &V = Seen[&B];
+
+        if (V.State != Unvisited && *V.PT <= *PT) {
+            return false;
+        }
 
         if (Pass->verbose) {
             errs () << "LOCKS: "<< B.getName()<< endll;
@@ -338,80 +335,48 @@ struct LockSearch : public LiptonPass::Processor {
                 errs () << *X.second << endll;
             }
         }
+        if (Pass->verbose) errs() << B << "\n";
 
-        if (seen.first == 0) {
-            if (Pass->verbose) errs() << B << "\n";
-            Stack.push_back ( StackElem(&B, PT) );
-            seen.first = -Stack.size();
-            return true;
-        }
-
-        if (seen.first < 0) { // stack
-
-            Instruction *firstNonPhi = B.getFirstNonPHI ();
-            LLASSERT (firstNonPhi, "No Instruction in " << B);
-            insertBlock (firstNonPhi, LoopBlock);
-
-            int Index = -seen.first - 1;
-            StackElem &Previous = Stack[Index];
-
-            if (*Previous.PT <= *PT) {
-                if (Pass->verbose) errs() << " --(revisit)--> "<<  B << "\n";
-
-                // re-explore: make stack overlap:
-                StackElem Next = StackElem (&B, PT);
-                Next.Last = Index;
-                Stack.push_back (Next);
-                seen.first = -Stack.size(); // update to highest on stack (Next)
-                return true;
+        if (V.State == Stacked) { // rewind stack
+            while (true) {
+                BasicBlock *Old = Stack.back();
+                Seen[Old].State = Visited;
+                Stack.pop_back ();
+                if (Old == &B) break;
             }
-        } else {
-
-            if (! (*seen.second <= *PT)) {
-                if (Pass->verbose) {
-                    errs () << "REVISITING A MONOTONICALLY DECREASING LOCK SECTION: "<< B << endll;
-                    errs () << "THREADS seen: " << seen.second->CorrectThreads << endll;
-                    for (PTCallType X : seen.second->Threads) {
-                        errs () << *X.second << endll;
-                    }
-                    errs () << "THREADS now: " << PT->CorrectThreads << endll;
-                    for (PTCallType X : PT->Threads) {
-                        errs () << *X.second << endll;
-                    }
-                    errs () << "LOCKS seen: "<< endll;
-                    for (PTCallType X : seen.second->Locks) {
-                        errs () << *X.second << endll;
-                    }
-                    errs () << "LOCKS now: "<< endll;
-                    for (PTCallType X : PT->Locks) {
-                        errs () << *X.second << endll;
-                    }
+        }
+        if (V.State != Unvisited) {
+            if (Pass->verbose) errs() << " --(lock revisit)--> "<<  B << "\n";
+            if (Pass->verbose) {
+                errs () << "REVISITING A MONOTONICALLY DECREASING LOCK SECTION: "<< B << endll;
+                errs () << "THREADS seen: " << V.PT->CorrectThreads << endll;
+                for (PTCallType X : V.PT->Threads) {
+                    errs () << *X.second << endll;
                 }
-
-                // re-explore visited blocks:
-                Stack.push_back ( StackElem(&B, PT) );
-                seen.first = -Stack.size();
-                return true;
+                errs () << "THREADS now: " << PT->CorrectThreads << endll;
+                for (PTCallType X : PT->Threads) {
+                    errs () << *X.second << endll;
+                }
+                errs () << "LOCKS seen: "<< endll;
+                for (PTCallType X : V.PT->Locks) {
+                    errs () << *X.second << endll;
+                }
+                errs () << "LOCKS now: "<< endll;
+                for (PTCallType X : PT->Locks) {
+                    errs () << *X.second << endll;
+                }
             }
         }
 
-        return false;
+        Stack.push_back ( &B );
+        V.PT = PT;
+        V.State = Stacked;
+        return true;
     }
 
     void
     deblock ( BasicBlock &B )
     {
-        pair<int, PThreadType *> &seen = Seen[&B];
-        StackElem &Pop = Stack.back();
-
-        seen.second = PT;
-
-        if (Pop.Last != -1) { // overlapping stacks: revert Seen to underlying
-            seen.first = Pop.Last;
-        }
-
-        PT = Pop.PT;
-
         if (Pass->verbose) {
             errs () << "BACK LOCKS: "<< endll;
             for (PTCallType X : PT->Locks) {
@@ -419,6 +384,8 @@ struct LockSearch : public LiptonPass::Processor {
             }
         }
 
+        LockVisited &V = Seen[&B];
+        PT = V.PT;
         Stack.pop_back();
     }
 
@@ -432,6 +399,10 @@ struct LockSearch : public LiptonPass::Processor {
 
         PT = new PThreadType(); //TODO: leak?
 
+        if (!T->getName().equals("main")) {
+            PT->CorrectThreads = false;
+        }
+
         errs() << "THREAD: "<< T->getName() << endll;
     }
 
@@ -442,36 +413,37 @@ struct LockSearch : public LiptonPass::Processor {
         AliasAnalysis::Location *Lock = new AliasAnalysis::Location(
                                 AA->getArgLocation(Call, 0, Mask));
 
-        int matches = 0;
-
         if (str == PTHREAD_CREATE || str == PTHREAD_JOIN) {
-            PT->checkAlias (PT->Threads, Lock, matches);
+
+            if (!PT->CorrectThreads) return;
+
+            int matches = checkAlias (PT->Threads, Lock);
             if (add) { // PTHREAD_CREATE
                 PT = new PThreadType(PT); // allocate new for search stack
-                PT->Threads.push_back (make_pair (Lock, Call));
-                if (PT->CorrectThreads && matches == 0 && !ThreadF->Loops(Call)) {
+
+                if (matches == 0) {
+                    errs () << "BEGIN: tracking thread: "<< *Call << endll;
+                    PT->Threads.push_back (make_pair (Lock, Call));
+                } else {
                     PT->CorrectThreads = false;
                     errs () << "WARNING: Giving up on thread tracking: "<<
                             *Lock->Ptr << endll << *Call << endll;
-                } else {
-                    errs () << "BEGIN: tracking thread: "<< *Call << endll;
                 }
             } else { // PTHREAD_JOIN
-                if (matches == 1 && PT->CorrectThreads && !ThreadF->Loops(Call)) {
-                    PT = new PThreadType(PT); // allocate new for search stack
-                    PT->removeAlias (PT->Threads, Lock);
+                PT = new PThreadType(PT); // allocate new for search stack
+                if (matches == 1) {
+                    removeAlias (PT->Threads, Lock);
                     errs () << "END: tracking thread: "<< *Call << endll;
-                } else if (PT->CorrectThreads) {
+                } else {
                     errs () << "WARNING: Giving up on thread tracking: "<<
                             *Lock->Ptr << endll << *Call << endll;
-                    PT = new PThreadType(PT); // allocate new for search stack
                     PT->CorrectThreads = false;
                 }
             }
             return;
         }
 
-        PT->checkAlias (PT->Locks, Lock, matches);
+        int matches = checkAlias (PT->Locks, Lock);
 
         if (add) {
             if (matches == 0) {
@@ -484,16 +456,10 @@ struct LockSearch : public LiptonPass::Processor {
                 // Do not add (cannot determine region statically)
             }
         } else {
+            PT = new PThreadType(PT); // allocate new for search stack
             if (matches == 1) {
-                PT = new PThreadType(PT); // allocate new for search stack
-                PT->removeAlias (PT->Locks, Lock);
+                removeAlias (PT->Locks, Lock);
                 errs () << "END: tracking lock: "<< *Call << endll;
-
-
-                errs () << "LOCKS AFTER: "<< endll;
-                for (PTCallType X : PT->Locks) {
-                    errs () << *X.second << endll;
-                }
             } else {
                 errs () << "WARNING: "<< str <<" pointer not found: "<<
                         *Lock->Ptr << endll << *Call << endll;
@@ -506,7 +472,11 @@ struct LockSearch : public LiptonPass::Processor {
     Instruction *
     handleCall (CallInst *Call)
     {
+        doHandle (Call);
+
         if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_YIELD)) {
+        } else if (Call->getCalledFunction ()->getName ().endswith("__assert_rtn")) {
+        } else if (Call->getCalledFunction ()->getName ().endswith("__assert")) {
         } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_LOCK)) {
             addPThread (Call, PTHREAD_LOCK, true);
         } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_RLOCK)) {
@@ -523,25 +493,44 @@ struct LockSearch : public LiptonPass::Processor {
             addPThread (Call, PTHREAD_JOIN, false);
         } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_MUTEX_INIT)) {
         } else if (Call->getCalledFunction ()->getName ().endswith(ATOMIC_BEGIN)) {
-            // TODO
+            LLASSERT (PT->Atomic == false, "Already "<< ATOMIC_BEGIN <<"encountered before: "<< Call << endll);
+            PT = new PThreadType(PT); // optimize
+            PT->Atomic = true;
         } else if (Call->getCalledFunction ()->getName ().endswith(ATOMIC_END)) {
-            // TODO
-        } else if (Call->getCalledFunction ()->getName ().endswith("__assert_rtn")) {
-        } else if (Call->getCalledFunction ()->getName ().endswith("__assert")) {
+            LLASSERT (PT->Atomic == true, "No "<< ATOMIC_BEGIN <<"encountered before: "<< Call << endll);
+            PT = new PThreadType(PT); // optimize
+            PT->Atomic = false;
         } else {
             return nullptr;
         }
+
+
         return Call;
     }
 
     Instruction *
     process (Instruction *I)
     {
+        doHandle (I);
 
         return I;
     }
+
+private:
+    void doHandle (Instruction *I)
+    {
+        LLVMInstr &LI = ThreadF->Instructions[I];
+        LI.Atomic = PT->Atomic;
+        LI.PT = PT;
+    }
 };
 
+// TODO: Left == Left | Bottom
+//inline area_e
+//operator< (area_e a, area_e b)
+//{
+//
+//}
 
 /**
  * Marks instructions that can be (dynamic) atomic section starts.
@@ -556,18 +545,23 @@ struct LockSearch : public LiptonPass::Processor {
  */
 struct Liptonize : public LiptonPass::Processor {
 
+    static StringRef                Action;
+
+    Liptonize(LiptonPass *Pass) : LiptonPass::Processor(Pass) { }
+    ~Liptonize() { }
+
     mover_e
     movable (Instruction *I)
     {
-        if (singleThreaded(I)) {
+        if (ThreadF->Instructions[I].singleThreaded()) {
             return BothMover;
         }
 
-        LiptonPass::LLVMThread *T = ThreadF;
+        LLVMThread *T = ThreadF;
 
-        for (pair<Function *, LiptonPass::LLVMThread *> &X : Pass->Threads) {
-            LiptonPass::LLVMThread *T2 = X.second;
-            if (T == T2 && T->Runs == 1)
+        for (pair<Function *, LLVMThread *> &X : Pass->Threads) {
+            LLVMThread *T2 = X.second;
+            if (T == T2 && T->isSingleton())
                 continue;
 
             AliasSet *AS = FindAliasSetForUnknownInst (T2->Aliases, I);
@@ -591,18 +585,13 @@ struct Liptonize : public LiptonPass::Processor {
         BasicBlock             *Block;
     };
 
-    static StringRef                Action;
-
     struct SeenType {
         int first;
     };
 
-    DenseMap<BasicBlock *, SeenType>     Seen;
-    area_e                          Area = Bottom;
-    vector<StackElem>               Stack;
-
-    using Processor::Processor;
-    ~Liptonize() { }
+    DenseMap<BasicBlock *, SeenType>        Seen;
+    vector<StackElem>                       Stack;
+    area_e                                  Area = Bottom;
 
     // block and deblock implement revisiting
     bool
@@ -711,6 +700,8 @@ struct Liptonize : public LiptonPass::Processor {
             doHandle (Call, RightMover);
         } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_MUTEX_INIT)) {
         } else if (Call->getCalledFunction ()->getName ().endswith(ATOMIC_BEGIN)) {
+            assert (!ThreadF->Instructions[Call].Atomic);
+            doHandle (Call, RightMover); // force (dynamic) yield (for Post/Top)
         } else if (Call->getCalledFunction ()->getName ().endswith(ATOMIC_END)) {
         } else if (Call->getCalledFunction ()->getName ().endswith("__assert_rtn")) {
         } else if (Call->getCalledFunction ()->getName ().endswith("__assert")) {
@@ -721,47 +712,56 @@ struct Liptonize : public LiptonPass::Processor {
         return Call;
     }
 
+
     Instruction *
     process (Instruction *I)
     {
-        pair<area_e, mover_e> &previous = ThreadF->CommitArea[I];
-        if ((previous.first == Pre && Area == Post) ||
-            (previous.first == Post && Area == Pre)) // 0 iff undefined
+        LLVMInstr &LI = ThreadF->Instructions[I];
+        if ((LI.Area == Pre && Area == Post) ||
+            (LI.Area == Post && Area == Pre)) // 0 iff undefined
             Area = Top;
 
         if (I->isTerminator()) {
             return I;
         }
 
-        mover_e Mover = previous.second;
-        if (Mover == 0)
+        mover_e Mover = LI.Mover;
+        if (Mover == 0) {
             Mover = movable (I);
+        }
 
         return doHandle (I, Mover);
     }
 
 private:
     Instruction *
-    doHandle (Instruction *I, mover_e m) // may overwrite less dynamic blocks
+    doHandle (Instruction *I, mover_e Mover) // may overwrite less dynamic blocks
     {
-        if (Pass->verbose) errs () << name(Area) << *I << " -> \t"<< name(m) << "\n";
+        if (Pass->verbose) errs () << name(Area) << *I << " -> \t"<< name(Mover) << "\n";
 
-        ThreadF->CommitArea[I] = make_pair (Area, m);
+        LLVMInstr &LI = ThreadF->Instructions[I];
+        LI.Area = Area;
+        LI.Mover = Mover;
 
         addMetaData (I, AREA, name(Area));
-        if (m != BothMover) {
-            addMetaData (I, MOVER, name(m));
+        if (Mover != BothMover) {
+            addMetaData (I, MOVER, name(Mover));
         }
-        if (singleThreaded(I)) {
+        if (ThreadF->Instructions[I].singleThreaded()) {
             addMetaData (I, SINGLE_THREADED, "");
         }
 
-        switch (m) {
+        bool atomic = LI.PT->Atomic;
+        switch (Mover) {
         case RightMover:
             if (Area & Post) { // Post, Top
                 insertBlock (I, YieldBlock);
             }
-            Area = Pre;
+            if (atomic) {
+                if (Area == Bottom) Area = Pre;
+            } else {
+                Area = Pre;
+            }
             break;
         case LeftMover:
             if (Area != Post) { // Bottom, Pre, Top
@@ -771,7 +771,7 @@ private:
             break;
         case NoneMover:
             insertBlock (I, YieldBlock);
-            Area = Top;
+            Area = Area == Post ? Post : Top;
             break;
         case BothMover:
             break;
@@ -781,42 +781,6 @@ private:
 
         return I;
     }
-
-    mover_e
-    followBlock (Instruction **Next)
-    {
-        int m = NoneMover;
-        Instruction *N = *Next;
-        while (( N = N->getNextNode () )) {
-            if (TerminatorInst *term = dyn_cast_or_null<TerminatorInst> (N)) {
-                int num = term->getNumSuccessors();
-                if (num == 0) break;
-
-                for (int i = 1; i < num; i++) {
-                    N = term->getSuccessor(i)->getFirstNonPHI();
-                    m |= followBlock (&N);
-                }
-                N = term->getSuccessor(0)->getFirstNonPHI();
-            }
-            if (CallInst *c2 = dyn_cast_or_null<CallInst> (N)) {
-                if (c2->getCalledFunction ()->getName ().endswith (ATOMIC_END)) {
-                    Next = &N;
-                    return mover_e(m);
-                }
-            }
-            // movers are implicitly treated as lattice:
-            m |= (int)movable(N);
-        }
-        ASSERT (false, "No matching atomic_end found!");
-        return NoneMover;
-    }
-
-    bool
-    singleThreaded (Instruction *I)
-    {
-        return PT->Threads.empty();
-    }
-
 
     bool
     isBlockStart (Instruction *I)
@@ -832,7 +796,7 @@ private:
     {
         assert (!I->isTerminator());
 
-        if (yieldType != LoopBlock && singleThreaded(I)) {
+        if (yieldType != LoopBlock && ThreadF->Instructions[I].singleThreaded()) {
             return -1; // TODO: precise pthread_create / join count
         }
 
@@ -914,25 +878,24 @@ template <typename ProcessorT>
 void
 LiptonPass::walkGraph (Module &M)
 {
-    ProcessorT processor(this, ProcessorT::Action);
+    ProcessorT processor(this);
     handle = &processor;
-
-    // handle main first, as execution starts there
-    Function *Main = M.getFunction("main");
-    // Create new LLVM thread if it doesn't exist
-    if (Threads.find(Main) == Threads.end()) {
-        Threads[Main] = new LLVMThread(Main, Threads.size(), this);
-    }
-    processor.thread (Main);
-    walkGraph (*Main);
 
     for (pair<Function *, vector<Instruction *>> &X : Reach->Threads) {
         Function *T = X.first;
-        if (T->getName().equals("main")) continue; // skip main
 
         // Create new LLVM thread if it doesn't exist
         if (Threads.find(T) == Threads.end()) {
-            Threads[T] = new LLVMThread(T, Threads.size(), this);
+
+            int Runs = Reach->Threads[T].size();
+            for (Instruction *I : Reach->Threads[T]) {
+                if (Reach->stCon(I, I)) {
+                    Runs = -1; // potentially infinite
+                    break;
+                }
+            }
+
+            Threads[T] = new LLVMThread(T, Threads.size(), Runs);
         }
         processor.thread (T);
         walkGraph (*T);
@@ -970,13 +933,10 @@ bool
 LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
                                   Instruction *I, LLVMThread *T)
 {
-    // First collect conflicting non-movers from other threads
-    unsigned TCount = T->Runs;
-
     // for all other threads
     for (pair<Function *, LLVMThread *> &Thread : Threads) {
         LLVMThread *T2 = Thread.second;
-        if (T2 == T && TCount == 1) // skip own thread function iff singleton
+        if (T2 == T && T->isSingleton())
             continue;
 
         AliasSet *AS = FindAliasSetForUnknownInst (T2->Aliases, I);
@@ -1004,7 +964,7 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
                         if (Blocks.size() == 1) {
                             // this is the first R found that may not commute,
                             // first add function identifier for T2:
-                            sv.push_back(&T2->Function);
+                            sv.push_back(&T2->F);
                         }
 
                         sv.push_back (num);
@@ -1021,7 +981,7 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
 }
 
 static void
-insertYield (LiptonPass::LLVMThread *T, Instruction* I, Function *YieldF, int block, bool HidePost)
+insertYield (LLVMThread *T, Instruction* I, Function *YieldF, int block, bool HidePost)
 {
     AllocaInst *Phase = T->PhaseVar;
     Value *blockId = ConstantInt::get (YieldF->getFunctionType ()->getParamType (0), block);
@@ -1036,7 +996,7 @@ insertYield (LiptonPass::LLVMThread *T, Instruction* I, Function *YieldF, int bl
 }
 
 static TerminatorInst *
-insertDynYield (LiptonPass::LLVMThread* T, Instruction* I, block_e type,
+insertDynYield (LLVMThread* T, Instruction* I, block_e type,
                 int block)
 {
     AllocaInst *Phase = T->PhaseVar;
@@ -1072,14 +1032,49 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type,
 
     SmallVector<Value*, 8> sv;
 
-    pair<area_e, mover_e> &BlockType = T->CommitArea[I];
-    area_e Area = BlockType.first;
-    mover_e Mover = BlockType.second;
+    LLVMInstr &LI = T->Instructions[I];
+    area_e Area = LI.Area;
+    mover_e Mover = LI.Mover;
+
+    if (LI.Atomic) { // no yields, just bookkeep phase
+
+        switch (Mover) {
+        case LeftMover:
+            if (Area != Post) {
+                new StoreInst(POSTCOMMIT, Phase, I);
+            }
+            break;
+        case RightMover:
+            break;
+        case NoneMover: {
+            // First collect conflicting non-movers from other threads
+            bool staticNM = conflictingNonMovers (sv, I, T);
+            assert (!sv.empty());
+
+            Instruction *ThenTerm = I;
+            if (!staticNM) {
+                Value *DynConflict = CallInst::Create(Act, sv, "", I);
+                ThenTerm = SplitBlockAndInsertIfThen (DynConflict, I, false);
+            }
+            new StoreInst(POSTCOMMIT, Phase, ThenTerm);
+            break;
+        }
+        default: { ASSERT (false, "Missing case: "<< type); }
+        }
+
+        if (type & LoopBlock) {
+            insertYield (T, I, YieldLocal, block, false);
+        }
+        return;
+    }
 
     switch (Mover) {
     case LeftMover:
         if (Area != Post) {
             new StoreInst(POSTCOMMIT, Phase, I);
+        }
+        if (type & LoopBlock) {
+            insertYield (T, I, YieldLocal, block, false);
         }
         break;
     case RightMover:
@@ -1158,9 +1153,9 @@ LiptonPass::staticYield (LLVMThread *T, Instruction *I, block_e type, int block)
         return;
     }
 
-    pair<area_e, mover_e> &BlockType = T->CommitArea[I];
-    area_e Area = BlockType.first;
-    mover_e Mover = BlockType.second;
+    LLVMInstr &BlockType = T->Instructions[I];
+    area_e Area = BlockType.Area;
+    mover_e Mover = BlockType.Mover;
 
     if (type == LoopBlock) {
         insertYield (T, I, YieldLocal, block, false);

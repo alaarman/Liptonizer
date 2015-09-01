@@ -48,17 +48,67 @@ enum area_e {
     Top     = Pre | Post    //
 };
 
-enum state_e {
-    Unvisited   = 0,
-    Stacked     = 1,
-    Visited     = 2,
-
-    OnLoop          = 1 << 10,
-    StackedOnLoop   = Stacked | OnLoop,
-    VisitedOnLoop   = Visited | OnLoop,
-};
 
 static AliasAnalysis                  *AA;
+
+
+typedef pair<const AliasAnalysis::Location *, Instruction *> PTCallType;
+
+struct PThreadType {
+    PThreadType () {}
+    PThreadType (PThreadType *O) {
+        Locks = O->Locks;
+        Threads = O->Threads;
+        CorrectThreads = O->CorrectThreads;
+    }
+
+    list<PTCallType>            Locks;
+    list<PTCallType>            Threads;
+    bool                        CorrectThreads = true;
+    bool                        Atomic = false;
+
+public:
+    bool operator<=(PThreadType &O);
+};
+
+struct LLVMInstr {
+    area_e          Area = (area_e)-1;
+    mover_e         Mover = (mover_e)-1;
+    bool            Atomic = false;
+    PThreadType    *PT = nullptr;
+
+    bool
+    singleThreaded ()
+    {
+        return PT->CorrectThreads && PT->Threads.empty();
+    }
+};
+
+struct LLVMThread {
+    Function                                   &F;
+    int                                         index;
+    int                                         Runs;
+
+    LLVMThread(Function *F, int i, int Instances)
+    :
+        F(*F),
+        index(i),
+        Runs(Instances)
+    {
+        Aliases = new AliasSetTracker(*AA);
+    }
+
+    DenseMap<Instruction *, pair<block_e, int>> BlockStarts;
+    AliasSetTracker                            *Aliases;
+    AllocaInst                                 *PhaseVar = nullptr;
+    DenseMap<Instruction *, LLVMInstr>          Instructions;
+
+    bool
+    isSingleton ()
+    {
+        return Runs == 1;
+    }
+};
 
 class LiptonPass : public ModulePass {
 
@@ -75,58 +125,24 @@ public:
     LiptonPass(ReachPass &RP, string name, bool v, bool staticBlocks,
                bool phase);
 
-    struct LLVMThread {
-        int                                         index;
-        int                                         Runs;
+    DenseMap<AliasSet *, list<Instruction *>>       AS2I;
+    DenseMap<Function *, LLVMThread *>              Threads;
 
-        LLVMThread(Function *F, int i, LiptonPass *Pass)
-        :
-            Function(*F),
-            index(i)
-        {
-            Aliases = new AliasSetTracker(*AA);
-            Runs = Pass->Reach->Threads[F].size();
-            for (Instruction *I : Pass->Reach->Threads[F]) {
-                if (Pass->Reach->stCon(I, I)) {
-                    Runs = -1; // potentially infinite
-                }
-            }
-        }
-
-        DenseMap<Instruction *, pair<block_e, int>> BlockStarts;
-        AliasSetTracker                            *Aliases;
-        Function                                   &Function;
-        AllocaInst                                 *PhaseVar = nullptr;
-
-        DenseMap<Instruction *, pair<area_e, mover_e>>  CommitArea;
-
-        DenseMap<BasicBlock *, state_e>             Seen;
-
-        bool
-        Loops (Instruction *I)
-        {
-            return Seen[I->getParent()] & OnLoop;
-        }
-    };
 
     struct Processor {
         LiptonPass                 *Pass;
         LLVMThread                 *ThreadF = nullptr;
-        Processor(LiptonPass *L, StringRef action) : Pass(L) {  }
+
+        Processor(LiptonPass *L) : Pass(L) {  }
         virtual ~Processor() {}
+
         virtual Instruction *process (Instruction *I)
                                      { return nullptr; }
         virtual Instruction *handleCall (CallInst *call) { return nullptr; }
         virtual void thread (Function *F) {}
         virtual bool block (BasicBlock &B) { return false; }
         virtual void deblock (BasicBlock &B) {  }
-
-        bool    isBlockStart (Instruction *I);
-        int     insertBlock (Instruction *I, block_e type);
     };
-
-    DenseMap<AliasSet *, list<Instruction *>>       AS2I;
-    DenseMap<Function *, LLVMThread *>              Threads;
 
 private:
     Processor                      *handle = nullptr;
