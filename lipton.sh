@@ -22,12 +22,20 @@ opt -mem2reg \
     -lcssa \
     -loop-unroll \
     -instnamer \
+    -dce \
     $BC > $OPT
+
 
 llvm-dis $OPT
     
-L=${OPT/%\.bc/-lipton.bc}
+F=${OPT/%\.bc/-lipton.bc}
 
-./LiptonPass ${@:2} < $OPT > $L 
+./LiptonPass ${@:2} < $OPT > $F 
 
-llvm-dis $L
+llvm-dis $F
+
+FO=${F/%\.bc/-opt.bc}
+
+opt -mem2reg -constprop -simplifycfg -globaldce -instnamer $F > $FO
+
+llvm-dis $FO
