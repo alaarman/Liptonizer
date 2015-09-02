@@ -138,12 +138,13 @@ public:
     bool                staticAll;  // no phase && dynamic commutativity
     bool                noDyn;      // no dynamic commutativity
     bool                NoLock;
+    bool                AllYield;
 
     ReachPass                      *Reach = nullptr;
 
     LiptonPass();
     LiptonPass(ReachPass &RP, string name, bool v, bool staticBlocks,
-               bool phase, bool noLock);
+               bool phase, bool noLock, bool allYield);
 
     DenseMap<AliasSet *, list<Instruction *>>       AS2I;
     DenseMap<Function *, LLVMThread *>              Threads;

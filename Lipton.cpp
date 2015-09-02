@@ -62,6 +62,10 @@ usage (const char *name)
     cerr << "\t-n\t|\tno dyn\t|\t+\t|\t-\t|"<< endl;
     cerr << "\t-s\t|\tstatic\t|\t-\t|\t-\t|"<< endl;
     cerr << endl;
+    cerr << "Select -l to disable static locked region identification" << endl;
+    cerr << "(reductions as in Transactions for Software Model Checking by Qadeer/Flanagan)." << endll;
+    cerr << "Select -y to insert local yields after each statement." << endl;
+    cerr << endl;
     cerr << "Select one of -n and -s (either no dynamic commutativity or static blocks)." << endl;
     cerr << endl;
     exit (-1);
@@ -85,16 +89,22 @@ main( int argc, const char *argv[] )
     }
     M = mod.get();
 
+    bool nolock = false;
     bool nodyn = false;
+    bool allYield = false;
     bool staticAll = false;
     bool verbose = false;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0) {
             verbose = true;
+        } else if (strcmp(argv[i], "-y") == 0) {
+            allYield = true;
         } else if (strcmp(argv[i], "-s") == 0) {
             staticAll = true;
         } else if (strcmp(argv[i], "-n") == 0) {
             nodyn = true;
+        } else if (strcmp(argv[i], "-l") == 0) {
+            nolock = true;
         } else {
             usage (argv[0]);
         }
@@ -137,7 +147,7 @@ main( int argc, const char *argv[] )
     ReachPass *reach = new ReachPass();
 
     LiptonPass *lipton = new LiptonPass(*reach, "stdin", verbose, staticAll,
-                                        nodyn);
+                                        nodyn, nolock, allYield);
 
     //pm.add (indvars);
     //pm.add (lur);

@@ -143,17 +143,19 @@ LiptonPass::LiptonPass () : ModulePass(ID),
         staticAll(false),
         noDyn(false),
         NoLock(false),
+        AllYield(false),
         Reach (nullptr)
 { }
 
 LiptonPass::LiptonPass (ReachPass &RP, string name, bool v, bool staticBlocks,
-                        bool phase, bool nolock)
+                        bool phase, bool nolock, bool allYield)
                                                             : ModulePass(ID),
         Name (name),
         verbose(v),
         staticAll(staticBlocks),
         noDyn(phase),
         NoLock(nolock),
+        AllYield(allYield),
         Reach (&RP)
 { }
 
@@ -848,6 +850,10 @@ private:
     {
         if (Pass->verbose) errs () << name(Area) << *I << " -> \t"<< name(Mover) << "\n";
 
+        if (Pass->AllYield) {
+            insertBlock (I, LoopBlock);
+        }
+
         LI.Area = Area;
         LI.Mover = Mover;
 
@@ -952,7 +958,7 @@ private:
         assert (!I->isTerminator());
 
         if (yieldType != LoopBlock && ThreadF->Instructions[I].singleThreaded()) {
-            return -1; // TODO: precise pthread_create / join count
+            return -1;
         }
 
         unsigned int blockID = ThreadF->BlockStarts.size ();
@@ -1290,15 +1296,17 @@ LiptonPass::staticYield (LLVMThread *T, Instruction *I, block_e type, int block)
 
     if (type == LoopBlock) {
         insertYield (I, YieldLocal, block);
-        return;
     } else {
         if (Mover == RightMover || Mover == NoneMover) {
             if (Area & Post) {
                 if (!LI.Atomic) {
                     insertYield (I, YieldGlobal, block);
+                    return;
                 }
             }
         }
+        // else :
+        insertYield (I, YieldLocal, block);
     }
 }
 
