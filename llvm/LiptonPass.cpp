@@ -118,9 +118,10 @@ static const char *
 name ( block_e m )
 {
     switch (m) {
+    case StartBlock:        return "Start Yield";
     case YieldBlock:        return "Global Yield";
-    case LoopBlock:         return "Local Yield";
-    case CoincidingBlock:   return "Global+Local Yield";
+    case LoopBlock:         return "Cycle Yield";
+    case CoincidingBlock:   return "Global+Cycle Yield";
     default: ASSERT (false, "Missing case: "<< m); return 0;
     }
 }
@@ -186,6 +187,32 @@ LLVMThread::isSingleton ()
 //{
 //
 //}
+
+static bool
+isCommutingAtomic (Instruction *I, Instruction *J)
+{
+    AtomicRMWInst *A = dyn_cast_or_null<AtomicRMWInst>(I);
+    if (!A) return false;
+    AtomicRMWInst *B = dyn_cast_or_null<AtomicRMWInst>(J);
+    if (!B) return false;
+    switch (A->getOperation()) {
+    case AtomicRMWInst::BinOp::Add:
+    case AtomicRMWInst::BinOp::Sub:
+        switch (B->getOperation()) {
+        case AtomicRMWInst::BinOp::Add:
+        case AtomicRMWInst::BinOp::Sub:
+            return true;
+        default:
+            return false;
+        }
+        break;
+    case AtomicRMWInst::BinOp::Xchg:
+    case AtomicRMWInst::BinOp::Nand:
+        return false;
+    default:
+        return A->getOperation() == B->getOperation();
+    }
+}
 
 static AliasSet *
 FindAliasSetForUnknownInst(AliasSetTracker *AST, Instruction *Inst)
@@ -526,10 +553,10 @@ struct LockSearch : public LiptonPass::Processor {
             }
         }
         if (V.State != Unvisited) {
-            if (Pass->verbose) errs() << " --(lock revisit)--> "<<  B << "\n";
             if (Pass->verbose) {
+                errs() << " --(lock revisit)--> "<<  B << "\n";
                 errs () << "REVISITING A MONOTONICALLY DECREASING LOCK SECTION: "<< B << endll;
-               PT->print (true, true, true);
+                PT->print (true, true, true);
             }
         }
 
@@ -545,6 +572,8 @@ struct LockSearch : public LiptonPass::Processor {
         if (Pass->verbose) PT->print (true, true, false);
 
         LockVisited &V = Seen[&B];
+        if (V.State != Stacked) return; // already popped in stack rewind
+
         PT = V.PT;
         Stack.pop_back();
     }
@@ -675,12 +704,9 @@ struct Liptonize : public LiptonPass::Processor {
         StackElem (area_e a, BasicBlock *B)
         :
             Area(a),
-            Seen(a),
             Block(B)
         {  }
         area_e                  Area;
-        area_e                  Seen;
-        int                     Last = -1;
         BasicBlock             *Block;
     };
 
@@ -699,36 +725,30 @@ struct Liptonize : public LiptonPass::Processor {
     {
         SeenType &V = Seen[&B];
 
-        if (V.Index == 0) {
+        if (V.Index == 0) { // Unvisited
             if (Pass->verbose) errs() << name(Area)  <<": "<< B << "\n";
             Stack.push_back ( StackElem(Area, &B) );
             V.Index = -Stack.size();
             return true;
-        }
+        } else if (V.Index < 0) { // Stack
+            Instruction *Start = getFirstNonTerminal (B.getFirstNonPHI ());
+            insertBlock (Start, LoopBlock);                 // Close cycle
 
-        if (V.Index < 0) { // stack
-
-            Instruction *firstNonPhi = B.getFirstNonPHI ();
-            LLASSERT (firstNonPhi, "No Instruction in " << B);
-            insertBlock (firstNonPhi, LoopBlock);
-
-            int Index = -V.Index - 1;
-            StackElem Previous = Stack[Index];
-            if (Previous.Seen < Area) {
-                if (Pass->verbose) errs() << name(Area)  <<" --(revisit)--> "<<  name(Previous.Seen) <<": "<< B << "\n";
-
-                // re-explore: make stack overlap:
-                Previous.Seen = Area;
-                StackElem Next = StackElem (Area, &B);
-                Next.Last = V.Index;
-                Stack.push_back (Next);
-                V.Index = -Stack.size(); // update to highest on stack (Next)
+            StackElem &Previous = Stack[-V.Index - 1];
+            if (Previous.Area < Area) {
+                if (Pass->verbose) errs() << name(Area)  <<" --(revisit)--> "<<  name(Previous.Area) <<": "<< B << "\n";
+                while (true) { // rewind stack
+                   StackElem &X = Stack.back ();
+                   if (&X == &Previous) break;
+                   Seen[X.Block].Area = X.Area;
+                   Stack.pop_back ();
+                }
+                Previous.Area = Area;
                 return true;
             }
         } else {
             if (V.Area < Area) {
                 if (Pass->verbose) errs() << name(Area)  <<" --(revisit)--> "<<  name(V.Area) <<": "<< B << "\n";
-
                 // re-explore visited blocks:
                 Stack.push_back ( StackElem(Area, &B) );
                 V.Index = -Stack.size();
@@ -744,16 +764,10 @@ struct Liptonize : public LiptonPass::Processor {
     deblock ( BasicBlock &B )
     {
         SeenType &V = Seen[&B];
+        if (V.Index > 0)
+            return; // already backtracked in stack rewind
         StackElem &Pop = Stack.back();
-
-        if (Pop.Last != -1) { // overlapping stacks: revert Seen to underlying
-            V.Index = Pop.Last;
-            int Index = -V.Index - 1;
-            Stack[Index].Seen = Pop.Seen;
-        } else {
-            V.Area = Pop.Seen;
-        }
-
+        V.Area = Pop.Area;
         Area = Pop.Area;
         Stack.pop_back();
     }
@@ -765,13 +779,8 @@ struct Liptonize : public LiptonPass::Processor {
         ThreadF = Pass->Threads[T];
         Area = Bottom; // We always start from a static yield
 
-        Instruction *Start = T->getEntryBlock ().getFirstNonPHI ();
-        // Skip empty blocks, as we do not want terminators in BlockStarts
-        while (TerminatorInst *T = dyn_cast<TerminatorInst> (Start)) {
-            assert (T->getNumSuccessors() == 1);
-            Start = T->getSuccessor(0)->getFirstNonPHI();
-        }
-        int b = insertBlock (Start, LoopBlock);
+        Instruction *Start = getFirstNonTerminal (T->getEntryBlock().getFirstNonPHI());
+        int b = insertBlock (Start, StartBlock);
         assert (b == 0); // start block
 
         Seen.clear();
@@ -830,12 +839,8 @@ struct Liptonize : public LiptonPass::Processor {
             (LI.Area == Post && Area == Pre)) // 0 iff undefined
             Area = Top;
 
-        if (I->isTerminator()) {
-            return I;
-        }
-
         mover_e Mover = LI.Mover;
-        if (LI.singleThreaded()) {
+        if (LI.singleThreaded() || I->isTerminator()) {
             Mover = BothMover;
         } else if (Mover == -1) {
             Mover = movable (LI, I);
@@ -850,10 +855,6 @@ private:
     {
         if (Pass->verbose) errs () << name(Area) << *I << " -> \t"<< name(Mover) << "\n";
 
-        if (Pass->AllYield) {
-            insertBlock (I, LoopBlock);
-        }
-
         LI.Area = Area;
         LI.Mover = Mover;
 
@@ -863,6 +864,11 @@ private:
         }
         if (LI.singleThreaded()) {
             addMetaData (I, SINGLE_THREADED, "");
+        }
+
+        if (Pass->AllYield) {
+            Instruction *Start = getFirstNonTerminal (I);
+            insertBlock (Start, LoopBlock);
         }
 
         switch (Mover) {
@@ -895,6 +901,7 @@ private:
         return I;
     }
 
+    // TODO: combine with getConflictingNonMovers
     mover_e
     movable (LLVMInstr &LI, Instruction *I)
     {
@@ -909,28 +916,30 @@ private:
                 continue;
 
             AliasSet *AS = FindAliasSetForUnknownInst (T2->Aliases, I);
-            if (AS != nullptr) {
+            if (AS == nullptr)  continue;
+            if (hasOnlyCommutingAtomicOps(AS, I)) continue; // try next thread T2
 
-                if (LI.PT->locks()) {
-                    if (PT == nullptr) {
-                        PT = new PThreadType (LI.PT); // copy
-                    }
-
-                    for (Instruction *J : Pass->AS2I[AS]) {
-                        LLVMInstr &LJ = T2->Instructions[J];
-
-                        for (PTCallType &LockJ : LJ.PT->ReadLocks) { // intersection:
-                            PT->eraseNonAlias (ReadLock, LockJ.first, LockJ.second);
-                        }
-                        for (PTCallType &LockJ : LJ.PT->WriteLocks) { // intersection:
-                            PT->eraseNonAlias (TotalLock, LockJ.first, LockJ.second);
-                        }
-                    }
+            if (LI.PT->locks()) {
+                if (PT == nullptr) {
+                    PT = new PThreadType (LI.PT); // copy
                 }
 
-                if (PT == nullptr || !PT->locks()) {
-                    return NoneMover;
+                for (Instruction *J : Pass->AS2I[AS]) {
+                    if (isCommutingAtomic(I,J)) continue;
+
+                    LLVMInstr &LJ = T2->Instructions[J];
+
+                    for (PTCallType &LockJ : LJ.PT->ReadLocks) { // intersection:
+                        PT->eraseNonAlias (ReadLock, LockJ.first, LockJ.second);
+                    }
+                    for (PTCallType &LockJ : LJ.PT->WriteLocks) { // intersection:
+                        PT->eraseNonAlias (TotalLock, LockJ.first, LockJ.second);
+                    }
                 }
+            }
+
+            if (PT == nullptr || !PT->locks()) {
+                return NoneMover;
             }
         }
 
@@ -955,9 +964,9 @@ private:
     int
     insertBlock (Instruction *I, block_e yieldType)
     {
-        assert (!I->isTerminator());
+        LLASSERT (!I->isTerminator(), "insertBlock "<< name(yieldType) <<". Instruction:" << *I);
 
-        if (yieldType != LoopBlock && ThreadF->Instructions[I].singleThreaded()) {
+        if (yieldType != StartBlock && ThreadF->Instructions[I].singleThreaded()) {
             return -1;
         }
 
@@ -966,9 +975,10 @@ private:
         if (isBlockStart(I)) {
             block_e ExistingType = ThreadF->BlockStarts[I].first;
             yieldType = (block_e) ((int)yieldType | (int)ExistingType);
-
-            errs () << "WARNING: Overwriting dynamic block "<< name(ExistingType) <<" --> "<< name(yieldType) <<": " << *I << endll;
             blockID = ThreadF->BlockStarts[I].second; // reuse block ID
+
+            if (ExistingType == yieldType) return blockID;
+            errs () << "WARNING: Overwriting dynamic block "<< name(ExistingType) <<" --> "<< name(yieldType) <<": " << *I << endll;
         }
 
         if (Pass->verbose) errs () << "New " << name(yieldType) << " block: " << *I << "\n";
@@ -977,6 +987,30 @@ private:
         //int globalBlockID = blockID + (1ULL << 16) * ThreadF->index;
         ThreadF->BlockStarts[I] = make_pair (yieldType, blockID);
         return blockID;
+    }
+
+    bool
+    hasOnlyCommutingAtomicOps (AliasSet* AS, Instruction* I)
+    {
+        if (!dyn_cast_or_null<AtomicRMWInst>(I)) return false;
+        for (Instruction* J : Pass->AS2I[AS]) {
+            if (!isCommutingAtomic(I, J)) {
+                return false;
+                break;
+            }
+        }
+        return true;
+    }
+
+    Instruction *
+    getFirstNonTerminal (Instruction *I)
+    {
+        // Skip empty blocks, as we do not want terminators in BlockStarts
+        while (TerminatorInst *T = dyn_cast<TerminatorInst> (I)) {
+            assert (T->getNumSuccessors () == 1);
+            I = T->getSuccessor (0)->getFirstNonPHI ();
+        }
+        return I;
     }
 };
 
@@ -1056,27 +1090,6 @@ LiptonPass::walkGraph (Module &M)
     }
 }
 
-
-static bool
-isAtomicIncDec (Instruction *I)
-{
-    if (/*AtomicRMWInst *A = */dyn_cast_or_null<AtomicRMWInst>(I)) {
-//        switch (A->getOperation()) {
-//        case AtomicRMWInst::BinOp::Add;
-//        case AtomicRMWInst::BinOp::Sub;
-//        case AtomicRMWInst::BinOp::And;
-//        case AtomicRMWInst::BinOp::Nand;
-//        case AtomicRMWInst::BinOp::Or;
-//        case AtomicRMWInst::BinOp::Xor;
-//            return true;
-//        default:
-//            return false;
-//        }
-        return true;
-    }
-    return false;
-}
-
 /**
  * Fills the small vector with arguments for the '__pass' function call
  * The following format is used: '__act(t_1, n_11,..., t2, n_21,....  )',
@@ -1100,8 +1113,8 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
         DenseSet<int> Blocks;
 
         // for all conflicting J
-        for (Instruction *I2 : AS2I[AS]) {
-            if (isAtomicIncDec(I) && isAtomicIncDec(I2)) continue;
+        for (Instruction *J : AS2I[AS]) {
+            if (isCommutingAtomic(I, J)) continue;
 
             // for all Block starting points TODO: refine to exit points
             for (pair<Instruction *, pair<block_e, int> > X : T2->BlockStarts) {
@@ -1109,7 +1122,7 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
                 int         blockID = X.second.second;
 
                 // if Block is in same process as J, and block can reach J
-                if (Reach->stCon (R, I2)) {
+                if (Reach->stCon (R, J)) {
 
                     // add block index to __act
                     Value *num = Constant::getIntegerValue (Int64, APInt(64, blockID));
@@ -1157,17 +1170,15 @@ insertDynYield (Instruction* I, Instruction *Cond, block_e type, int block)
 }
 
 void
-LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type,
-                          int block)
+LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block)
 {
     AllocaInst *Phase = T->PhaseVar;
 
     assert(POSTCOMMIT == TRUE);
 
-    if (block == 0) {
+    if (type == StartBlock) {
         return;
-    }
-    if (type == LoopBlock) {
+    } else if (type == LoopBlock) {
         insertYield (I, YieldLocal, block);
         return;
     }
@@ -1178,7 +1189,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type,
     area_e Area = LI.Area;
     mover_e Mover = LI.Mover;
 
-    if (LI.Atomic) { // no yields, just bookkeep phase
+    if (LI.Atomic) { // no yields, just book keeping phase
 
         if (type & LoopBlock) { // highest change for still catch a Pre phase
             insertYield (I, YieldLocal, block);
@@ -1244,7 +1255,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type,
         case Top: {
             LoadInst *P = new LoadInst (Phase, "", NextTerm);
             Instruction *PhaseTerm = insertDynYield (NextTerm, P, type, block);
-            new StoreInst(PRECOMMIT, Phase, PhaseTerm); // Temporarily for yield
+            new StoreInst (PRECOMMIT, Phase, PhaseTerm); // Temporarily for yield
             insertYield (PhaseTerm, YieldGlobal, block);
             // in NextTerm:
             new StoreInst(POSTCOMMIT, Phase, NextTerm);
@@ -1286,27 +1297,23 @@ LiptonPass::initialInstrument (Module &M)
 void
 LiptonPass::staticYield (LLVMThread *T, Instruction *I, block_e type, int block)
 {
-    if (block == 0) {
+    if (type == StartBlock) {
         return;
-    }
-
-    LLVMInstr &LI = T->Instructions[I];
-    area_e Area = LI.Area;
-    mover_e Mover = LI.Mover;
-
-    if (type == LoopBlock) {
+    } else if (type == LoopBlock) {
         insertYield (I, YieldLocal, block);
-    } else {
-        if (Mover == RightMover || Mover == NoneMover) {
-            if (Area & Post) {
-                if (!LI.Atomic) {
-                    insertYield (I, YieldGlobal, block);
-                    return;
-                }
-            }
+    } else { // YieldBlock or combinations
+        LLVMInstr &LI = T->Instructions[I];
+
+        if (LI.Atomic) {
+            if (type & LoopBlock)
+                insertYield (I, YieldLocal, block);
+            return;
         }
-        // else :
-        insertYield (I, YieldLocal, block);
+        if ((LI.Mover == RightMover || LI.Mover == NoneMover) && (LI.Area & Post)) {
+            insertYield (I, YieldGlobal, block);
+        } else if (type & LoopBlock) {
+            insertYield (I, YieldLocal, block);
+        }
     }
 }
 
@@ -1377,55 +1384,6 @@ LiptonPass::deduceInstances ()
     }
 }
 
-void
-LiptonPass::refineAliasSets()
-{
-
-    for (pair<Function *, LLVMThread *> &X : Threads) {
-        LLVMThread *T = X.second;
-        list<AliasSet *> Remove;
-        for (AliasSet &AS : *T->Aliases) {
-            bool ok = true;
-            for (Instruction *I : AS2I[&AS]) {
-                if (!isAtomicIncDec(I)) continue;
-
-                // for all other threads
-                for (pair<Function *, LLVMThread *> &Thread : Threads) {
-                    LLVMThread *T2 = Thread.second;
-                    if (T2 == T && T->isSingleton())
-                        continue;
-
-                    AliasSet *AS2 = FindAliasSetForUnknownInst (T2->Aliases, I);
-                    if (AS2 == nullptr)
-                        continue;
-
-                    // for all conflicting J
-                    for (Instruction *I2 : AS2I[AS2]) {
-
-                        errs () << *I << endll << *I2 <<endll;
-                        if (!isAtomicIncDec(I2)) {
-                            ok = false;
-                            break;
-                        }
-                    }
-                    if (!ok) break;
-                }
-                if (!ok) break;
-            }
-            if (ok) {
-                Remove.push_back (&AS);
-            }
-        }
-
-        for (AliasSet *AS : Remove) {
-            T->Aliases->remove(*AS);
-            for (Instruction *I2 : AS2I[AS]) {
-                errs () << "Removing atomic increments: "<< *I2 <<endll;
-            }
-        }
-    }
-}
-
 bool
 LiptonPass::runOnModule (Module &M)
 {
@@ -1439,8 +1397,6 @@ LiptonPass::runOnModule (Module &M)
     walkGraph<Collect> (M);
 
     deduceInstances ();
-
-    // refineAliasSets ();
 
     // Identify and number blocks statically
     // (assuming all dynamic non-movers are static non-movers)

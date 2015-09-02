@@ -28,9 +28,11 @@ using namespace llvm;
 namespace VVT {
 
 enum block_e {
-    YieldBlock   = 1 << 0,
-    LoopBlock    = 1 << 1,
+    StartBlock  = 0,        // First in thread. May be overwritten (|= is used).
+    YieldBlock  = 1 << 0,   // Real yield or phase shift needed
+    LoopBlock   = 1 << 1,   // Breaks cycles.
     CoincidingBlock = LoopBlock|YieldBlock,
+    // Both Yield and Cycle block (either yield should happen to break cycle)
 };
 
 enum mover_e {
