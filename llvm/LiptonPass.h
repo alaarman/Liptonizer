@@ -185,6 +185,8 @@ private:
                                Instruction *I, LLVMThread *T);
     void initialInstrument (Module &M);
     void finalInstrument (Module &M);
+    void deduceInstances ();
+    void refineAliasSets();
 };
 
 

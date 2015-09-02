@@ -1356,6 +1356,76 @@ LiptonPass::finalInstrument (Module &M)
     }
 }
 
+void
+LiptonPass::deduceInstances ()
+{
+    for (pair<Function *, vector<Instruction *>> &X : Reach->Threads) {
+        Function *T = X.first;
+        LLVMThread *TT = Threads[T];
+
+        TT->Runs = Reach->Threads[T].size ();
+        for (Instruction *I : Reach->Threads[T]) {
+            if (I == nullptr)
+                break; // MAIN
+            if (TT->Instructions[I].Loops) {
+                TT->Runs = -1; // potentially infinite
+                errs () << "THREAD: " << T->getName ()
+                        << " (Potentially infinite)" << endll << *I << endll;
+                break;
+            }
+        }
+    }
+}
+
+void
+LiptonPass::refineAliasSets()
+{
+
+    for (pair<Function *, LLVMThread *> &X : Threads) {
+        LLVMThread *T = X.second;
+        list<AliasSet *> Remove;
+        for (AliasSet &AS : *T->Aliases) {
+            bool ok = true;
+            for (Instruction *I : AS2I[&AS]) {
+                if (!isAtomicIncDec(I)) continue;
+
+                // for all other threads
+                for (pair<Function *, LLVMThread *> &Thread : Threads) {
+                    LLVMThread *T2 = Thread.second;
+                    if (T2 == T && T->isSingleton())
+                        continue;
+
+                    AliasSet *AS2 = FindAliasSetForUnknownInst (T2->Aliases, I);
+                    if (AS2 == nullptr)
+                        continue;
+
+                    // for all conflicting J
+                    for (Instruction *I2 : AS2I[AS2]) {
+
+                        errs () << *I << endll << *I2 <<endll;
+                        if (!isAtomicIncDec(I2)) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if (!ok) break;
+                }
+                if (!ok) break;
+            }
+            if (ok) {
+                Remove.push_back (&AS);
+            }
+        }
+
+        for (AliasSet *AS : Remove) {
+            T->Aliases->remove(*AS);
+            for (Instruction *I2 : AS2I[AS]) {
+                errs () << "Removing atomic increments: "<< *I2 <<endll;
+            }
+        }
+    }
+}
+
 bool
 LiptonPass::runOnModule (Module &M)
 {
@@ -1368,20 +1438,9 @@ LiptonPass::runOnModule (Module &M)
     // Collect movability info
     walkGraph<Collect> (M);
 
-    for (pair<Function *, vector<Instruction *>> &X : Reach->Threads) {
-        Function *T = X.first;
-        LLVMThread *TT = Threads[T];
+    deduceInstances ();
 
-        TT->Runs = Reach->Threads[T].size();
-        for (Instruction *I : Reach->Threads[T]) {
-            if (I == nullptr) break; // MAIN
-            if (TT->Instructions[I].Loops) {
-                TT->Runs = -1; // potentially infinite
-                errs () <<"THREAD: "<< T->getName() << " (Potentially infinite)"<< endll << *I << endll;
-                break;
-            }
-        }
-    }
+    // refineAliasSets ();
 
     // Identify and number blocks statically
     // (assuming all dynamic non-movers are static non-movers)
