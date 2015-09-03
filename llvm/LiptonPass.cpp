@@ -417,6 +417,8 @@ PThreadType::locks ()
 int
 PThreadType::findAlias (pt_e kind, const AliasAnalysis::Location *Lock)
 {
+    errs () << "FINDING alias: "<< name(kind, true) <<": "<< Lock << endll;
+
     if (kind == ThreadStart) {
         return checkAlias (Threads, Lock);
     }
@@ -583,18 +585,16 @@ struct LockSearch : public LiptonPass::Processor {
     void
     thread (Function *T)
     {
+        assert (T != nullptr);
+        errs() << "THREAD: "<< T->getName() << endll;
         assert (Stack.empty());
+        Seen.clear();
         ThreadF = Pass->Threads[T];
 
-        Seen.clear();
-
         PT = new PThreadType(); //TODO: leak?
-
-        if (!T->getName().equals("main")) {
+        if (!T->getName().equals("main")) { // Not single threaded from the start!
             PT->CorrectThreads = false;
         }
-
-        errs() << "THREAD: "<< T->getName() << endll;
     }
 
     void
@@ -626,32 +626,33 @@ struct LockSearch : public LiptonPass::Processor {
     Instruction *
     handleCall (CallInst *Call)
     {
+        assert (Call && Call->getCalledFunction());
         doHandle (Call);
 
-        if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_YIELD)) {
-        } else if (Call->getCalledFunction ()->getName ().endswith("__assert_rtn")) {
-        } else if (Call->getCalledFunction ()->getName ().endswith("__assert")) {
-        } else if (Call->getCalledFunction ()->getName ().endswith("llvm.expect.i64")) {
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_LOCK)) {
+        if (Call->getCalledFunction()->getName().endswith(PTHREAD_YIELD)) {
+        } else if (Call->getCalledFunction()->getName().endswith("__assert_rtn")) {
+        } else if (Call->getCalledFunction()->getName().endswith("__assert")) {
+        } else if (Call->getCalledFunction()->getName().endswith("llvm.expect.i64")) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_LOCK)) {
             addPThread (Call, TotalLock, true);
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_RLOCK)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_RLOCK)) {
             addPThread (Call, ReadLock, true);
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_WLOCK)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_WLOCK)) {
             addPThread (Call, TotalLock, true);
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_RW_UNLOCK)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_RW_UNLOCK)) {
             addPThread (Call, AnyLock, false);
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_UNLOCK)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_UNLOCK)) {
             addPThread (Call, TotalLock, false);
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_CREATE)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_CREATE)) {
             addPThread (Call, ThreadStart, true);
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_JOIN)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_JOIN)) {
             addPThread (Call, ThreadStart, false);
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_MUTEX_INIT)) {
-        } else if (Call->getCalledFunction ()->getName ().endswith(ATOMIC_BEGIN)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_MUTEX_INIT)) {
+        } else if (Call->getCalledFunction()->getName().endswith(ATOMIC_BEGIN)) {
             LLASSERT (PT->Atomic == false, "Already "<< ATOMIC_BEGIN <<"encountered before: "<< Call << endll);
             PT = new PThreadType(PT); // optimize
             PT->Atomic = true;
-        } else if (Call->getCalledFunction ()->getName ().endswith(ATOMIC_END)) {
+        } else if (Call->getCalledFunction()->getName().endswith(ATOMIC_END)) {
             LLASSERT (PT->Atomic == true, "No "<< ATOMIC_BEGIN <<"encountered before: "<< Call << endll);
             PT = new PThreadType(PT); // optimize
             PT->Atomic = false;
@@ -777,6 +778,9 @@ struct Liptonize : public LiptonPass::Processor {
     void
     thread (Function *T)
     {
+        assert (T != nullptr);
+        errs() << "THREAD: "<< T->getName() << endll;
+
         assert (Stack.empty());
         ThreadF = Pass->Threads[T];
         Area = Bottom; // We always start from a static yield
@@ -786,46 +790,44 @@ struct Liptonize : public LiptonPass::Processor {
         assert (b == 0); // start block
 
         Seen.clear();
-
-        errs() << "THREAD: "<< T->getName() << endll;
     }
 
     Instruction *
     handleCall (CallInst *Call)
     {
+        assert (Call && Call->getCalledFunction());
+
         LLVMInstr &LI = ThreadF->Instructions[Call];
         if (LI.singleThreaded ()) {
             doHandle (LI, Call, BothMover);
             return Call;
         }
 
-        // TODO: could globally hold the same locks as well. Reuse movable?
-
-        if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_YIELD)) {
+        if (Call->getCalledFunction()->getName().endswith(PTHREAD_YIELD)) {
             errs () << "WARNING: pre-existing Yield call: "<< *Call <<"\n";
             Area = Bottom;
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_LOCK)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_LOCK)) {
             doHandle (LI, Call, RightMover);
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_RLOCK)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_RLOCK)) {
             doHandle (LI, Call, RightMover);
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_WLOCK)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_WLOCK)) {
             doHandle (LI, Call, RightMover);
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_RW_UNLOCK)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_RW_UNLOCK)) {
             doHandle (LI, Call, LeftMover);
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_UNLOCK)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_UNLOCK)) {
             doHandle (LI, Call, LeftMover);
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_CREATE)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_CREATE)) {
             doHandle (LI, Call, LeftMover);
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_JOIN)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_JOIN)) {
             doHandle (LI, Call, RightMover);
-        } else if (Call->getCalledFunction ()->getName ().endswith(PTHREAD_MUTEX_INIT)) {
-        } else if (Call->getCalledFunction ()->getName ().endswith(ATOMIC_BEGIN)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_MUTEX_INIT)) {
+        } else if (Call->getCalledFunction()->getName().endswith(ATOMIC_BEGIN)) {
             assert (!ThreadF->Instructions[Call].Atomic);
             doHandle (LI, Call, RightMover); // force (dynamic) yield (for Post/Top)
-        } else if (Call->getCalledFunction ()->getName ().endswith(ATOMIC_END)) {
-        } else if (Call->getCalledFunction ()->getName ().endswith("__assert_rtn")) {
-        } else if (Call->getCalledFunction ()->getName ().endswith("__assert")) {
-        } else if (Call->getCalledFunction ()->getName ().endswith("llvm.expect.i64")) {
+        } else if (Call->getCalledFunction()->getName().endswith(ATOMIC_END)) {
+        } else if (Call->getCalledFunction()->getName().endswith("__assert_rtn")) {
+        } else if (Call->getCalledFunction()->getName().endswith("__assert")) {
+        } else if (Call->getCalledFunction()->getName().endswith("llvm.expect.i64")) {
         } else {
             return nullptr;
         }
@@ -1038,13 +1040,16 @@ LiptonPass::walkGraph ( Instruction *I )
         DenseMap<Instruction *, Function *> callRecords = Reach->callRecords;
         if (callRecords.find (call) != callRecords.end ()) {
             walkGraph (*callRecords[call]);
-        } else {
+        } else if (call->getCalledFunction()) {
            Instruction *Next = handle->handleCall (call);
            if (Next == nullptr) {
+               assert (call && call->getCalledFunction());
                errs() << "Handle library call: "<< call->getCalledFunction()->getName() <<"\n";
            } else {
                I = Next;
            }
+        } else {
+            errs() << "Indirect call: "<< call <<"\n";
         }
     } else {
         assert (!I->isTerminator());
@@ -1067,6 +1072,7 @@ LiptonPass::walkGraph ( BasicBlock &B )
 void
 LiptonPass::walkGraph ( Function &F )
 {
+    assert (&F);
     if (verbose) errs() << F.getName() << "\n";
     walkGraph (F.getEntryBlock());
 }
@@ -1378,6 +1384,8 @@ LiptonPass::deduceInstances ()
                 break; // MAIN
             if (TT->Instructions[I].Loops) {
                 TT->Runs = -1; // potentially infinite
+
+                assert (T);
                 errs () << "THREAD: " << T->getName ()
                         << " (Potentially infinite)" << endll << *I << endll;
                 break;
