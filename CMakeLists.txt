@@ -12,14 +12,14 @@ message(STATUS "Using LLVM binaries from in: ${LLVM_TOOLS_BINARY_DIR}")
 project(LLVMPass CXX)
 
 
-SET (CMAKE_C_COMPILER             "/opt/local/libexec/llvm-3.5/bin//clang")
+SET (CMAKE_C_COMPILER             "clang")
 SET (CMAKE_C_FLAGS                "-Wall -std=c99")
 SET (CMAKE_C_FLAGS_DEBUG          "-g -O0")
 SET (CMAKE_C_FLAGS_MINSIZEREL     "-Os -DNDEBUG")
 SET (CMAKE_C_FLAGS_RELEASE        "-O4 -DNDEBUG")
 SET (CMAKE_C_FLAGS_RELWITHDEBINFO "-O2 -g")
 
-SET (CMAKE_CXX_COMPILER             "/opt/local/libexec/llvm-3.5/bin/clang++")
+SET (CMAKE_CXX_COMPILER             "clang++")
 SET (CMAKE_CXX_FLAGS                "-Wall -std=c++11")
 SET (CMAKE_CXX_FLAGS_DEBUG          "-g -O0")
 SET (CMAKE_CXX_FLAGS_MINSIZEREL     "-Os -DNDEBUG")
@@ -53,7 +53,8 @@ add_executable(LiptonPass
                     llvm/LiptonPass.cpp
                     Lipton.cpp)
 
-include_directories(. ~/andersen/include/)
+
+include_directories(LiptonPass . ~/andersen/include/ ${LLVM_INCLUDE_DIRS})
 
 
 FIND_LIBRARY(ANDERS_LIBRARY Anders lib)
