@@ -1138,7 +1138,7 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
 
                 // if Block is in same process as J, and block can reach J
                 bool LReach = isPotentiallyReachable (R, J);
-//                bool Own = Reach->stCon (R, J);
+//                bool Own = Reach->stCon (R, J) || R == J;
 //                if (Own != LReach) {
 //                    errs () << "Missing reachable: "<< endll <<*R << endll << *J << endll << *R->getParent() <<endll << *J->getParent()<<endll;
 //                }
