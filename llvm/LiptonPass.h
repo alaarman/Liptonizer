@@ -85,15 +85,15 @@ public:
     void print (bool read, bool write, bool threads);
     bool locks  ();
 
-    PThreadType *overlap(pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call);
-    PThreadType *add    (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call);
-    PThreadType *missed (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call);
-    PThreadType *eraseAlias     (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call);
+    PThreadType *overlap(pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call);
+    PThreadType *add    (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call);
+    PThreadType *missed (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call);
+    PThreadType *eraseAlias     (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call);
 
     // exception to COW (used to reduce lock set candidates):
-    void eraseNonAlias  (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call);
+    void eraseNonAlias  (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call);
 
-    int  findAlias   (pt_e kind, const AliasAnalysis::Location *Lock);
+    int  findAlias   (pt_e kind, const AliasAnalysis::Location &Loc);
 };
 
 struct LLVMInstr {

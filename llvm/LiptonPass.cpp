@@ -226,11 +226,11 @@ FindAliasSetForUnknownInst(AliasSetTracker *AST, Instruction *Inst)
 }
 
 static int
-checkAlias (list<PTCallType> &List, const AliasAnalysis::Location *Lock)
+checkAlias (list<PTCallType> &List, const AliasAnalysis::Location &Loc)
 {
     int matches = 0;
-    for (PTCallType &Loc : List) {
-        llvm::AliasAnalysis::AliasResult Alias = AA->alias (*Lock, *Loc.first);
+    for (PTCallType &L : List) {
+        llvm::AliasAnalysis::AliasResult Alias = AA->alias (Loc, *L.first);
         if (Alias == AliasAnalysis::MustAlias) {
             matches++;
         } else if (Alias != AliasAnalysis::NoAlias) {
@@ -255,11 +255,11 @@ removeAlias (list<PTCallType> &List, const AliasAnalysis::Location *Lock)
 }
 
 static void
-removeNonAlias (list<PTCallType> &List, const AliasAnalysis::Location *Lock)
+removeNonAlias (list<PTCallType> &List, const AliasAnalysis::Location &Lock)
 {
     list<PTCallType>::iterator It = List.begin();
     while (It != List.end()) {
-        if (AA->alias(*Lock, *It->first) != AliasAnalysis::MustAlias) {
+        if (AA->alias(Lock, *It->first) != AliasAnalysis::MustAlias) {
             It = List.erase(It);
         } else {
             It++;
@@ -360,19 +360,19 @@ bool
 PThreadType::operator<=(PThreadType &O)
 {
     for (PTCallType &Call : ReadLocks) {
-        if (checkAlias(O.ReadLocks, Call.first) != 1) {
+        if (checkAlias(O.ReadLocks, *Call.first) != 1) {
             return false;
         }
     }
     for (PTCallType &Call : WriteLocks) {
-        if (checkAlias(O.WriteLocks, Call.first) != 1) {
+        if (checkAlias(O.WriteLocks, *Call.first) != 1) {
             return false;
         }
     }
     if (!O.CorrectThreads) return true;
     if (!CorrectThreads) return false;
     for (PTCallType &Call : Threads) {
-        if (checkAlias(O.Threads, Call.first) != 1) {
+        if (checkAlias(O.Threads, *Call.first) != 1) {
             return false;
         }
     }
@@ -415,24 +415,24 @@ PThreadType::locks ()
 }
 
 int
-PThreadType::findAlias (pt_e kind, const AliasAnalysis::Location *Lock)
+PThreadType::findAlias (pt_e kind, const AliasAnalysis::Location &Loc)
 {
     if (kind == ThreadStart) {
-        return checkAlias (Threads, Lock);
+        return checkAlias (Threads, Loc);
     }
     if (kind & ReadLock) {
-        return checkAlias (ReadLocks, Lock);
+        return checkAlias (ReadLocks, Loc);
     }
     if (kind & TotalLock) {
-        return checkAlias (WriteLocks, Lock);
+        return checkAlias (WriteLocks, Loc);
     }
     assert (false); return -1;
 }
 
 PThreadType *
-PThreadType::missed (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call)
+PThreadType::missed (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call)
 {
-    errs () << "WARNING: missed "<< name(kind, false) <<" join/unlock: "<<*Lock->Ptr << endll << *Call << endll;
+    errs () << "WARNING: missed "<< name(kind, false) <<" join/unlock: "<<*Loc.Ptr << endll << *Call << endll;
     PThreadType *PT = new PThreadType(this);
     if (kind == ThreadStart) {
         PT->CorrectThreads = false;
@@ -448,19 +448,19 @@ PThreadType::missed (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *C
 }
 
 PThreadType *
-PThreadType::eraseAlias (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call)
+PThreadType::eraseAlias (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call)
 {
     errs () << "END: tracking "<< name(kind, false) <<": "<< *Call << endll;
     PThreadType *PT = new PThreadType(this);
     if (kind == ThreadStart) {
-        removeAlias (PT->Threads, Lock);
+        removeAlias (PT->Threads, &Loc);
     } else {
         int count = 0;
         if (kind & ReadLock) {
-            count += removeAlias (PT->ReadLocks, Lock);
+            count += removeAlias (PT->ReadLocks, &Loc);
         }
         if (kind & TotalLock) {
-            count += removeAlias (PT->WriteLocks, Lock);
+            count += removeAlias (PT->WriteLocks, &Loc);
         }
         assert (count == 1);
     }
@@ -469,30 +469,31 @@ PThreadType::eraseAlias (pt_e kind, const AliasAnalysis::Location *Lock, CallIns
 
 
 void
-PThreadType::eraseNonAlias (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call)
+PThreadType::eraseNonAlias (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call)
 {
     if (kind == ThreadStart) {
-        removeNonAlias (Threads, Lock);
+        removeNonAlias (Threads, Loc);
     } else if (kind == ReadLock) {
-        removeNonAlias (ReadLocks, Lock);
+        removeNonAlias (ReadLocks, Loc);
     } else if (kind == TotalLock || kind == AnyLock) {
-        removeNonAlias (WriteLocks, Lock);
+        removeNonAlias (WriteLocks, Loc);
     }
 }
 
 PThreadType *
-PThreadType::add (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call)
+PThreadType::add (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call)
 {
     errs () << "BEGIN: tracking "<< name(kind, true) <<": "<< *Call << endll;
 
+    AliasAnalysis::Location *L = new AliasAnalysis::Location (Loc);
     PThreadType *PT = new PThreadType(this);
     assert (kind != AnyLock);
     if (kind == ThreadStart) {
-        PT->Threads.push_back (make_pair(Lock, Call));
+        PT->Threads.push_back (make_pair(L, Call));
     } else if (kind & ReadLock) {
-        PT->ReadLocks.push_back (make_pair(Lock, Call));
+        PT->ReadLocks.push_back (make_pair(L, Call));
     } else if (kind & TotalLock) {
-        PT->WriteLocks.push_back (make_pair(Lock, Call));
+        PT->WriteLocks.push_back (make_pair(L, Call));
     } else {
         assert (false);
     }
@@ -500,9 +501,9 @@ PThreadType::add (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call
 }
 
 PThreadType *
-PThreadType::overlap (pt_e kind, const AliasAnalysis::Location *Lock, CallInst *Call)
+PThreadType::overlap (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call)
 {
-    errs () << "WARNING: retracking (dropping) "<< name(kind, true) <<": "<<*Lock->Ptr << endll << *Call << endll;
+    errs () << "WARNING: retracking (dropping) "<< name(kind, true) <<": "<<*Loc.Ptr << endll << *Call << endll;
     if (kind == ThreadStart) {
         PThreadType *PT = new PThreadType(this);
         PT->CorrectThreads = false;
@@ -601,22 +602,28 @@ struct LockSearch : public LiptonPass::Processor {
         if (Pass->NoLock) return;
         if (kind == ThreadStart && !PT->CorrectThreads) return; // nothing to do
 
-        AliasAnalysis::ModRefResult Mask;
-                AliasAnalysis::Location *Lock = new AliasAnalysis::Location(
-                                        AA->getArgLocation(Call, 0, Mask));
+        AliasAnalysis::Location L;
+        if (kind == ThreadStart && !add) { // PTHREAD_JOIN
+            Value *Temp = Call->getArgOperand(0);
+            LoadInst *Load = dyn_cast<LoadInst>(Temp);
+            L = AA->getLocation(Load);
+        } else {
+            AliasAnalysis::ModRefResult Mask;
+            L = AA->getArgLocation (Call, 0, Mask);
+        }
 
-        int matches = PT->findAlias (kind, Lock);
+        int matches = PT->findAlias (kind, L);
         if (add) {
             if (matches == 0) {
-                PT = PT->add (kind, Lock, Call);
+                PT = PT->add (kind, L, Call);
             } else { // Do not add (cannot determine region statically)
-                PT = PT->overlap (kind, Lock, Call);
+                PT = PT->overlap (kind, L, Call);
             }
         } else {
             if (matches == 1) {
-                PT = PT->eraseAlias (kind, Lock, Call);
+                PT = PT->eraseAlias (kind, L, Call);
             } else { // Empty (Cannot determine end of locked region)
-                PT = PT->missed (kind, Lock, Call);
+                PT = PT->missed (kind, L, Call);
             }
         }
     }
@@ -932,10 +939,10 @@ private:
                     LLVMInstr &LJ = T2->Instructions[J];
 
                     for (PTCallType &LockJ : LJ.PT->ReadLocks) { // intersection:
-                        PT->eraseNonAlias (ReadLock, LockJ.first, LockJ.second);
+                        PT->eraseNonAlias (ReadLock, *LockJ.first, LockJ.second);
                     }
                     for (PTCallType &LockJ : LJ.PT->WriteLocks) { // intersection:
-                        PT->eraseNonAlias (TotalLock, LockJ.first, LockJ.second);
+                        PT->eraseNonAlias (TotalLock, *LockJ.first, LockJ.second);
                     }
                 }
             }
@@ -1122,26 +1129,28 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
         for (Instruction *J : AS2I[AS]) {
             if (isCommutingAtomic(I, J)) continue;
 
+
+
             // for all Block starting points TODO: refine to exit points
             for (pair<Instruction *, pair<block_e, int> > X : T2->BlockStarts) {
                 Instruction *R = X.first;
                 int         blockID = X.second.second;
+                //errs () << *I << endll <<*J << endll << *R <<" ++++++ "<< *R->getNextNode() << endll;
 
                 // if Block is in same process as J, and block can reach J
-                if (Reach->stCon (R, J)) {
+                if (!Reach->stCon(R, J)) continue;
 
-                    // add block index to __act
-                    Value *num = Constant::getIntegerValue (Int64, APInt(64, blockID));
-                    if (Blocks.insert(blockID).second) { // new
+                // add block index to __act
+                Value *num = Constant::getIntegerValue (Int64, APInt(64, blockID));
+                if (Blocks.insert(blockID).second) { // new
 
-                        if (Blocks.size() == 1) {
-                            // this is the first R found that may not commute,
-                            // first add function identifier for T2:
-                            sv.push_back(&T2->F);
-                        }
-
-                        sv.push_back (num);
+                    if (Blocks.size() == 1) {
+                        // this is the first R found that may not commute,
+                        // first add function identifier for T2:
+                        sv.push_back(&T2->F);
                     }
+
+                    sv.push_back (num);
                 }
             }
         }
@@ -1212,7 +1221,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
         case NoneMover: {
             // First collect conflicting non-movers from other threads
             bool staticNM = conflictingNonMovers (sv, I, T);
-            assert (!sv.empty());
+            LLASSERT (!sv.empty(), "Unexpected ("<< staticNM <<"), no conflicts found for: "<< *I);
 
             Instruction *ThenTerm = I;
             if (!staticNM) {
@@ -1249,7 +1258,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
     case NoneMover: {
         // First collect conflicting non-movers from other threads
         bool staticNM = conflictingNonMovers (sv, I, T);
-        assert (!sv.empty());
+        LLASSERT (!sv.empty(), "Unexpected("<< staticNM <<"), no conflicts found for: "<< *I);
 
         // if in dynamic conflict (non-commutativity)
         Instruction *NextTerm = I;
