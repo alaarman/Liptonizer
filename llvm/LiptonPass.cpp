@@ -542,21 +542,22 @@ struct LockSearch : public LiptonPass::Processor {
         if (V.State != Unvisited && *V.PT <= *PT) {
             return false;
         }
-        if (Pass->verbose) errs() << B << "\n";
+        if (Pass->verbose) {
+            errs() << B << "\n";
+            if (V.State != Unvisited) {
+                errs() << " --(lock revisit)--> "<<  B << "\n";
+                errs () << "REVISITING A MONOTONICALLY DECREASING LOCK SECTION: "<< B << endll;
+                PT->print (true, true, true);
+            }
+        }
 
         if (V.State == Stacked) { // rewind stack
             while (true) {
                 BasicBlock *Old = Stack.back();
                 Seen[Old].State = Visited;
                 Stack.pop_back ();
+                errs () << "Removing: " << *Old<< endll;
                 if (Old == &B) break;
-            }
-        }
-        if (V.State != Unvisited) {
-            if (Pass->verbose) {
-                errs() << " --(lock revisit)--> "<<  B << "\n";
-                errs () << "REVISITING A MONOTONICALLY DECREASING LOCK SECTION: "<< B << endll;
-                PT->print (true, true, true);
             }
         }
 
@@ -575,6 +576,7 @@ struct LockSearch : public LiptonPass::Processor {
         if (V.State != Stacked) return; // already popped in stack rewind
 
         PT = V.PT;
+        V.State = Visited;
         Stack.pop_back();
     }
 
