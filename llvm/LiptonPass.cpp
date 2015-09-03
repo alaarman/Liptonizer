@@ -417,8 +417,6 @@ PThreadType::locks ()
 int
 PThreadType::findAlias (pt_e kind, const AliasAnalysis::Location *Lock)
 {
-    errs () << "FINDING alias: "<< name(kind, true) <<": "<< Lock << endll;
-
     if (kind == ThreadStart) {
         return checkAlias (Threads, Lock);
     }
