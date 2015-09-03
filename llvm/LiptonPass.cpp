@@ -11,6 +11,7 @@
 #include <set>
 #include <string>
 
+#include <llvm/Analysis/CFG.h>
 #include <llvm/Analysis/Passes.h>
 #include <llvm/Bitcode/ReaderWriter.h>
 #include <llvm/IR/Constants.h>
@@ -1129,8 +1130,6 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
         for (Instruction *J : AS2I[AS]) {
             if (isCommutingAtomic(I, J)) continue;
 
-
-
             // for all Block starting points TODO: refine to exit points
             for (pair<Instruction *, pair<block_e, int> > X : T2->BlockStarts) {
                 Instruction *R = X.first;
@@ -1138,7 +1137,13 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
                 //errs () << *I << endll <<*J << endll << *R <<" ++++++ "<< *R->getNextNode() << endll;
 
                 // if Block is in same process as J, and block can reach J
-                if (!Reach->stCon(R, J)) continue;
+                bool LReach = isPotentiallyReachable (R, J);
+//                bool Own = Reach->stCon (R, J);
+//                if (Own != LReach) {
+//                    errs () << "Missing reachable: "<< endll <<*R << endll << *J << endll << *R->getParent() <<endll << *J->getParent()<<endll;
+//                }
+                if (!LReach)
+                    continue;
 
                 // add block index to __act
                 Value *num = Constant::getIntegerValue (Int64, APInt(64, blockID));
