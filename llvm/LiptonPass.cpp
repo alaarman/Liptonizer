@@ -876,7 +876,7 @@ private:
             addMetaData (I, SINGLE_THREADED, "");
         }
 
-        if (Pass->AllYield) {
+        if (Pass->AllYield && !I->isTerminator()) {
             Instruction *Start = getFirstNonTerminal (I);
             insertBlock (Start, LoopBlock);
         }
@@ -1017,7 +1017,7 @@ private:
     {
         // Skip empty blocks, as we do not want terminators in BlockStarts
         while (TerminatorInst *T = dyn_cast<TerminatorInst> (I)) {
-            assert (T->getNumSuccessors () == 1);
+            LLASSERT (T->getNumSuccessors () == 1, "No support for branching at loop head or thread start: "<< *I);
             I = T->getSuccessor (0)->getFirstNonPHI ();
         }
         return I;
