@@ -850,7 +850,7 @@ struct Liptonize : public LiptonPass::Processor {
             Area = Top;
 
         mover_e Mover = LI.Mover;
-        if (LI.singleThreaded() || I->isTerminator()) {
+        if (LI.singleThreaded() || I->isTerminator() || dyn_cast_or_null<PHINode>(I) == nullptr) {
             Mover = BothMover;
         } else if (Mover == -1) {
             Mover = movable (LI, I);
@@ -876,7 +876,7 @@ private:
             addMetaData (I, SINGLE_THREADED, "");
         }
 
-        if (Pass->AllYield && !I->isTerminator()) {
+        if (Pass->AllYield && !I->isTerminator() && dyn_cast_or_null<PHINode>(I) == nullptr) {
             Instruction *Start = getFirstNonTerminal (I);
             insertBlock (Start, LoopBlock);
         }
@@ -974,6 +974,9 @@ private:
     int
     insertBlock (Instruction *I, block_e yieldType)
     {
+        LLASSERT (dyn_cast_or_null<PHINode>(I) == nullptr,
+                  "insertBlock("<< name(yieldType) <<") on PHI Instruction: "<< endll << *I);
+
         LLASSERT (!I->isTerminator(), "insertBlock "<< name(yieldType) <<". Instruction:" << *I);
 
         if (yieldType != StartBlock && ThreadF->Instructions[I].singleThreaded()) {
@@ -1000,7 +1003,7 @@ private:
     }
 
     bool
-    hasOnlyCommutingAtomicOps (AliasSet* AS, Instruction* I)
+    hasOnlyCommutingAtomicOps (AliasSet *AS, Instruction *I)
     {
         if (!dyn_cast_or_null<AtomicRMWInst>(I)) return false;
         for (Instruction* J : Pass->AS2I[AS]) {
