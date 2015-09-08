@@ -977,7 +977,9 @@ private:
         LLASSERT (dyn_cast_or_null<PHINode>(I) == nullptr,
                   "insertBlock("<< name(yieldType) <<") on PHI Instruction: "<< endll << *I);
 
-        LLASSERT (!I->isTerminator(), "insertBlock "<< name(yieldType) <<". Instruction:" << *I);
+        LLASSERT (!I->isTerminator() || // self-loop exception:
+                  dyn_cast_or_null<TerminatorInst>(I)->getSuccessor (0)->getFirstNonPHI () == I,
+                  "insertBlock "<< name(yieldType) <<". Instruction:" << *I);
 
         if (yieldType != StartBlock && ThreadF->Instructions[I].singleThreaded()) {
             return -1;
@@ -1021,7 +1023,11 @@ private:
         // Skip empty blocks, as we do not want terminators in BlockStarts
         while (TerminatorInst *T = dyn_cast<TerminatorInst> (I)) {
             LLASSERT (T->getNumSuccessors () == 1, "No support for branching at loop head or thread start: "<< *I);
-            I = T->getSuccessor (0)->getFirstNonPHI ();
+            Instruction *J = T->getSuccessor (0)->getFirstNonPHI ();
+            if (I == J) {
+                return J; // self loop
+            }
+            I = J;
         }
         return I;
     }
