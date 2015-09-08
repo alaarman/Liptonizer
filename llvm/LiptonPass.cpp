@@ -850,7 +850,7 @@ struct Liptonize : public LiptonPass::Processor {
             Area = Top;
 
         mover_e Mover = LI.Mover;
-        if (LI.singleThreaded() || I->isTerminator() || dyn_cast_or_null<PHINode>(I) == nullptr) {
+        if (LI.singleThreaded() || I->isTerminator() || dyn_cast_or_null<PHINode>(I) != nullptr) {
             Mover = BothMover;
         } else if (Mover == -1) {
             Mover = movable (LI, I);
