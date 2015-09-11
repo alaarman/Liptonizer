@@ -122,6 +122,7 @@ name ( block_e m )
     case StartBlock:        return "Start Yield";
     case YieldBlock:        return "Global Yield";
     case LoopBlock:         return "Cycle Yield";
+    case LoopBlock2:         return "GlobalCycle Yield";
     case CoincidingBlock:   return "Global+Cycle Yield";
     default: ASSERT (false, "Missing case: "<< m); return 0;
     }
@@ -169,10 +170,14 @@ LiptonPass::getAnalysisUsage (AnalysisUsage &AU) const
     AU.addRequired<CallGraphWrapperPass>();
 }
 
-bool
+block_e
 LiptonPass::Processor::isBlockStart (Instruction *I)
 {
-    return ThreadF->BlockStarts.find(I) != ThreadF->BlockStarts.end();
+	auto Start = ThreadF->BlockStarts.find(I);
+	if (Start != ThreadF->BlockStarts.end()) {
+    	return Start->second.first;
+    }
+	return NoBlock;
 }
 
 bool
@@ -736,12 +741,23 @@ struct Liptonize : public LiptonPass::Processor {
 
         if (V.Index == 0) { // Unvisited
             if (Pass->verbose) errs() << name(Area)  <<": "<< B << "\n";
+
+
+            if (Pass->NoInternal && hasIncomingBackEdge(B)) {
+            	errs () << "INSERTING Static Loop Yield "<< endll;
+				insertBlock (getFirstNonTerminal(&B), LoopBlock2); // Close cycle
+            }
+
             Stack.push_back ( StackElem(Area, &B) );
             V.Index = -Stack.size();
+
             return true;
         } else if (V.Index < 0) { // Stack
             Instruction *Start = getFirstNonTerminal (B.getFirstNonPHI ());
-            insertBlock (Start, LoopBlock);                 // Close cycle
+
+            if (!Pass->NoInternal) {
+            	insertBlock (Start, LoopBlock);                 // Close cycle
+            }
 
             StackElem &Previous = Stack[-V.Index - 1];
             if (Previous.Area < Area) {
@@ -850,7 +866,9 @@ struct Liptonize : public LiptonPass::Processor {
             Area = Top;
 
         mover_e Mover = LI.Mover;
-        if (LI.singleThreaded() || I->isTerminator() || dyn_cast_or_null<PHINode>(I) != nullptr) {
+
+        if (LI.singleThreaded() || I->isTerminator() ||
+        		dyn_cast_or_null<PHINode>(I) != nullptr) {
             Mover = BothMover;
         } else if (Mover == -1) {
             Mover = movable (LI, I);
@@ -865,6 +883,9 @@ private:
     {
         if (Pass->verbose) errs () << name(Area) << *I << " -> \t"<< name(Mover) << "\n";
 
+        if (Pass->NoInternal && isBlockStart(I) == LoopBlock2) {
+        	Area = Bottom;
+        }
         LI.Area = Area;
         LI.Mover = Mover;
 
@@ -974,6 +995,7 @@ private:
     int
     insertBlock (Instruction *I, block_e yieldType)
     {
+    	assert (yieldType != NoBlock);
         LLASSERT (dyn_cast_or_null<PHINode>(I) == nullptr,
                   "insertBlock("<< name(yieldType) <<") on PHI Instruction: "<< endll << *I);
 
@@ -987,12 +1009,12 @@ private:
 
         unsigned int blockID = ThreadF->BlockStarts.size ();
 
-        if (isBlockStart(I)) {
-            block_e ExistingType = ThreadF->BlockStarts[I].first;
-            yieldType = (block_e) ((int)yieldType | (int)ExistingType);
+        block_e ExistingType = isBlockStart(I);
+        if (ExistingType != NoBlock) {
             blockID = ThreadF->BlockStarts[I].second; // reuse block ID
-
-            if (ExistingType == yieldType) return blockID;
+        	if (ExistingType == yieldType || ExistingType == LoopBlock2)
+        		return blockID;
+            yieldType = (block_e) ((int)yieldType | (int)ExistingType);
             errs () << "WARNING: Overwriting dynamic block "<< name(ExistingType) <<" --> "<< name(yieldType) <<": " << *I << endll;
         }
 
@@ -1018,6 +1040,12 @@ private:
     }
 
     Instruction *
+    getFirstNonTerminal (BasicBlock *B)
+    {
+        return getFirstNonTerminal(B->getFirstNonPHI());
+    }
+
+    Instruction *
     getFirstNonTerminal (Instruction *I)
     {
         // Skip empty blocks, as we do not want terminators in BlockStarts
@@ -1031,6 +1059,22 @@ private:
         }
         return I;
     }
+
+	bool
+	hasIncomingBackEdge (BasicBlock &B)
+	{
+		StackElem *X = Stack.empty() ? nullptr : &Stack.back();
+		for (pred_iterator PI = pred_begin(&B), E = pred_end(&B); PI != E; ++PI) {
+			BasicBlock *Pred = *PI;
+			if (Pred == X->Block)
+				continue; // no cycle as B is new
+			if (&B == Pred || isPotentiallyReachable(B.getTerminator(),
+													 &Pred->front())) {
+				return true;
+			}
+		}
+		return false;
+	}
 };
 
 StringRef Collect::Action = "Collecting";
@@ -1201,8 +1245,6 @@ insertDynYield (Instruction* I, Instruction *Cond, block_e type, int block)
 void
 LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block)
 {
-    AllocaInst *Phase = T->PhaseVar;
-
     assert(POSTCOMMIT == TRUE);
 
     if (type == StartBlock) {
@@ -1212,11 +1254,24 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
         return;
     }
 
-    SmallVector<Value*, 8> sv;
-
     LLVMInstr &LI = T->Instructions[I];
     area_e Area = LI.Area;
     mover_e Mover = LI.Mover;
+    AllocaInst *Phase = T->PhaseVar;
+
+    if (type & LoopBlock2) {
+    	assert (type == LoopBlock2);
+    	errs () << "Static Loop Yield "<< *I << endll;
+    	insertYield (I, YieldGlobal, block);
+        if (Mover & RightMover) {
+            new StoreInst (PRECOMMIT, Phase, I);
+        } else {
+        	new StoreInst (POSTCOMMIT, Phase, I);
+        }
+    	return;
+    }
+
+    SmallVector<Value*, 8> sv;
 
     if (LI.Atomic) { // no yields, just book keeping phase
 
