@@ -28,9 +28,11 @@ using namespace llvm;
 namespace VVT {
 
 enum block_e {
+	NoBlock		= -1,
     StartBlock  = 0,        // First in thread. May be overwritten (|= is used).
     YieldBlock  = 1 << 0,   // Real yield or phase shift needed
     LoopBlock   = 1 << 1,   // Breaks cycles.
+	LoopBlock2   = 1 << 2,  // Breaks cycles statically
     CoincidingBlock = LoopBlock|YieldBlock,
     // Both Yield and Cycle block (either yield should happen to break cycle)
 };
@@ -141,6 +143,7 @@ public:
     bool                noDyn;      // no dynamic commutativity
     bool                NoLock;
     bool                AllYield;
+    bool                NoInternal = true;
 
     ReachPass                      *Reach = nullptr;
 
@@ -165,7 +168,7 @@ public:
         virtual void thread (Function *F) {}
         virtual bool block (BasicBlock &B) { return false; }
         virtual void deblock (BasicBlock &B) {  }
-        bool isBlockStart (Instruction *I);
+        block_e isBlockStart (Instruction *I);
     };
 
 private:
