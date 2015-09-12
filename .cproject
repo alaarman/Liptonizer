@@ -28,6 +28,7 @@
 								<option defaultValue="false" id="llvm.c.link.option.nativeCBackEnd.890165546" name="Create native binary (with C backend code generator)" superClass="llvm.c.link.option.nativeCBackEnd" valueType="boolean"/>
 								<option id="llvm.c.link.option.paths.1427083725" name="Library search path (-L)" superClass="llvm.c.link.option.paths" valueType="libPaths">
 									<listOptionValue builtIn="false" value="${ProjDirPath}/lib"/>
+									<listOptionValue builtIn="false" value="/opt/local/libexec/llvm-3.5/lib"/>
 								</option>
 								<option id="llvm.c.link.option.libs.1058660481" name="Libraries (-l)" superClass="llvm.c.link.option.libs" valueType="libs">
 									<listOptionValue builtIn="false" value="Anders"/>
@@ -49,6 +50,7 @@
 									<listOptionValue builtIn="false" value="/opt/local/libexec/llvm/include"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${HOME}/andersen/include/&quot;"/>
+									<listOptionValue builtIn="false" value="/opt/local/libexec/llvm-3.5/include"/>
 								</option>
 								<option id="llvm.c_cpp.compiler.option.preprocessor.def.389420905" name="Defined symbols (-D)" superClass="llvm.c_cpp.compiler.option.preprocessor.def" valueType="definedSymbols">
 									<listOptionValue builtIn="false" value="__STDC_LIMIT_MACROS"/>
@@ -56,6 +58,7 @@
 									<listOptionValue builtIn="false" value="_GNU_SOURCE"/>
 									<listOptionValue builtIn="false" value="__STDC_FORMAT_MACROS"/>
 									<listOptionValue builtIn="false" value="__STDC_CONSTANT_MACROS"/>
+									<listOptionValue builtIn="false" value="__ECLIPSE"/>
 								</option>
 								<option id="llvm.c_cpp.compiler.option.misc.other.1600611777" name="Other flags" superClass="llvm.c_cpp.compiler.option.misc.other" value="-c -fmessage-length=0 -std=c++11" valueType="string"/>
 								<inputType id="cdt.managedbuild.tool.llvm.cpp.compiler.input.1724323334" superClass="cdt.managedbuild.tool.llvm.cpp.compiler.input"/>
@@ -94,6 +97,9 @@
 							<tool id="cdt.managedbuild.tool.llvm.clang.macosx.cpp.linker.exe.release.2075084005" name="LLVM C++ linker" superClass="cdt.managedbuild.tool.llvm.clang.macosx.cpp.linker.exe.release">
 								<option defaultValue="true" id="llvm.c.link.option.native.1871754778" name="Create native binary (with LLVM native code generator)" superClass="llvm.c.link.option.native" valueType="boolean"/>
 								<option defaultValue="false" id="llvm.c.link.option.nativeCBackEnd.1142611112" name="Create native binary (with C backend code generator)" superClass="llvm.c.link.option.nativeCBackEnd" valueType="boolean"/>
+								<option id="llvm.c.link.option.paths.106302303" superClass="llvm.c.link.option.paths" valueType="libPaths">
+									<listOptionValue builtIn="false" value="/opt/local/libexec/llvm-3.5/lib"/>
+								</option>
 								<inputType id="cdt.managedbuild.tool.llvm.c.linker.input.1937538895" superClass="cdt.managedbuild.tool.llvm.c.linker.input">
 									<additionalInput kind="additionalinputdependency" paths="$(USER_OBJS)"/>
 									<additionalInput kind="additionalinput" paths="$(LIBS)"/>
@@ -109,6 +115,10 @@
 								<option id="llvm.c_cpp.compiler.option.include.paths.1655871082" name="Include paths (-I)" superClass="llvm.c_cpp.compiler.option.include.paths" valueType="includePath">
 									<listOptionValue builtIn="false" value="/opt/install/libexec/llvm/include"/>
 									<listOptionValue builtIn="false" value="/opt/local/libexec/llvm/include"/>
+									<listOptionValue builtIn="false" value="/opt/local/libexec/llvm-3.5/include"/>
+								</option>
+								<option id="llvm.c_cpp.compiler.option.preprocessor.def.962559039" superClass="llvm.c_cpp.compiler.option.preprocessor.def" valueType="definedSymbols">
+									<listOptionValue builtIn="false" value="__ECLIPSE"/>
 								</option>
 								<inputType id="cdt.managedbuild.tool.llvm.cpp.compiler.input.131150424" superClass="cdt.managedbuild.tool.llvm.cpp.compiler.input"/>
 							</tool>
