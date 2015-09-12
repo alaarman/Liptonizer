@@ -609,14 +609,14 @@ struct LockSearch : public LiptonPass::Processor {
         if (kind == ThreadStart && !PT->CorrectThreads) return; // nothing to do
 
         AliasAnalysis::Location L;
-        if (kind == ThreadStart && !add) { // PTHREAD_JOIN
-            Value *Temp = Call->getArgOperand(0);
-            LoadInst *Load = dyn_cast<LoadInst>(Temp);
-            L = AA->getLocation(Load);
-        } else {
+//        if (kind == ThreadStart && !add) { // PTHREAD_JOIN
+//            Value *Temp = Call->getArgOperand(0);
+//            LoadInst *Load = dyn_cast<LoadInst>(Temp);
+//            L = AA->getLocation(Load);
+//        } else {
             AliasAnalysis::ModRefResult Mask;
             L = AA->getArgLocation (Call, 0, Mask);
-        }
+//        }
 
         int matches = PT->findAlias (kind, L);
         if (add) {
@@ -1195,6 +1195,7 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
 //                if (Own != LReach) {
 //                    errs () << "Missing reachable: "<< endll <<*R << endll << *J << endll << *R->getParent() <<endll << *J->getParent()<<endll;
 //                }
+                errs () << LReach <<"=Reach("<< "?" <<". "<< blockID <<"): " <<*J << " --> " << *R << endll;
                 if (!LReach)
                     continue;
 
