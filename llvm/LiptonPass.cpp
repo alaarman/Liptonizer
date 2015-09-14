@@ -820,7 +820,8 @@ struct Liptonize : public LiptonPass::Processor {
         assert (Call && Call->getCalledFunction());
 
         LLVMInstr &LI = ThreadF->Instructions[Call];
-        if (LI.singleThreaded ()) {
+        if (LI.singleThreaded () &&
+        	!Call->getCalledFunction()->getName().endswith(PTHREAD_CREATE)) {
             doHandle (LI, Call, BothMover);
             return Call;
         }
