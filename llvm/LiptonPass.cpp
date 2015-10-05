@@ -958,6 +958,7 @@ private:
 
                 for (Instruction *J : Pass->AS2I[AS]) {
                     if (isCommutingAtomic(I,J)) continue;
+                    if (!I->mayWriteToMemory() && !J->mayWriteToMemory()) continue;
 
                     LLVMInstr &LJ = T2->Instructions[J];
 
@@ -1183,6 +1184,7 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
         // for all conflicting J
         for (Instruction *J : AS2I[AS]) {
             if (isCommutingAtomic(I, J)) continue;
+            if (!I->mayWriteToMemory() && !J->mayWriteToMemory()) continue;
 
             // for all Block starting points TODO: refine to exit points
             for (pair<Instruction *, pair<block_e, int> > X : T2->BlockStarts) {
