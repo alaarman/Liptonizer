@@ -943,7 +943,6 @@ private:
         PThreadType *PT = nullptr; // will store lock set if necessary
         assert (LI.PT != nullptr);
 
-        errs () <<"  ---    ---  " << endll;
         for (pair<Function *, LLVMThread *> &X : Pass->Threads) {
             LLVMThread *T2 = X.second;
             if (T == T2 && T->isSingleton()) continue;
@@ -952,7 +951,6 @@ private:
             if (AS == nullptr)  continue;
 
 			for (Instruction *J : Pass->AS2I[AS]) {
-				errs () <<"  ---  "<< *I << "\n  ---  "<< *J << endll;
 				if (isCommutingAtomic(I,J)) continue;
 				if (!I->mayWriteToMemory() && !J->mayWriteToMemory()) continue;
 
@@ -973,7 +971,6 @@ private:
 			}
 
             if (conflict && (PT == nullptr || !PT->locks())) {
-            	errs() << "NM" << endll;
                 return NoneMover;
             }
         }
@@ -1158,8 +1155,6 @@ bool
 LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
                                   Instruction *I, LLVMThread *T)
 {
-
-	errs () <<"  ---  ---  "<<  endll;
     // for all other threads
     for (pair<Function *, LLVMThread *> &Thread : Threads) {
         LLVMThread *T2 = Thread.second;
@@ -1171,7 +1166,6 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
         DenseSet<int> Blocks;
         // for all conflicting J
         for (Instruction *J : AS2I[AS]) {
-            errs () <<"  ---  "<< *I << "\n  ---  "<< *J << endll;
             if (isCommutingAtomic(I, J)) continue;
             if (!I->mayWriteToMemory() && !J->mayWriteToMemory()) continue;
 
