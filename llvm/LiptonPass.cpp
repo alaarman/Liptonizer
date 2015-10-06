@@ -869,7 +869,7 @@ struct Liptonize : public LiptonPass::Processor {
         mover_e Mover = LI.Mover;
 
         if (LI.singleThreaded() || I->isTerminator() ||
-        		dyn_cast_or_null<PHINode>(I) != nullptr) {
+									dyn_cast_or_null<PHINode>(I) != nullptr) {
             Mover = BothMover;
         } else if (Mover == -1) {
             Mover = movable (LI, I);
@@ -939,39 +939,41 @@ private:
     {
         LLVMThread *T = ThreadF;
 
+        bool conflict = false;
         PThreadType *PT = nullptr; // will store lock set if necessary
         assert (LI.PT != nullptr);
 
+        errs () <<"  ---    ---  " << endll;
         for (pair<Function *, LLVMThread *> &X : Pass->Threads) {
             LLVMThread *T2 = X.second;
-            if (T == T2 && T->isSingleton())
-                continue;
+            if (T == T2 && T->isSingleton()) continue;
 
             AliasSet *AS = FindAliasSetForUnknownInst (T2->Aliases, I);
             if (AS == nullptr)  continue;
-            if (hasOnlyCommutingAtomicOps(AS, I)) continue; // try next thread T2
 
-            if (LI.PT->locks()) {
-                if (PT == nullptr) {
-                    PT = new PThreadType (LI.PT); // copy
-                }
+			for (Instruction *J : Pass->AS2I[AS]) {
+				errs () <<"  ---  "<< *I << "\n  ---  "<< *J << endll;
+				if (isCommutingAtomic(I,J)) continue;
+				if (!I->mayWriteToMemory() && !J->mayWriteToMemory()) continue;
 
-                for (Instruction *J : Pass->AS2I[AS]) {
-                    if (isCommutingAtomic(I,J)) continue;
-                    if (!I->mayWriteToMemory() && !J->mayWriteToMemory()) continue;
+				LLVMInstr &LJ = T2->Instructions[J];
 
-                    LLVMInstr &LJ = T2->Instructions[J];
+				conflict = true;
+	            if (!LI.PT->locks() || !LJ.PT->locks()) break;
+				if (PT == nullptr) {
+					PT = new PThreadType (LI.PT); // copy
+				}
 
-                    for (PTCallType &LockJ : LJ.PT->ReadLocks) { // intersection:
-                        PT->eraseNonAlias (ReadLock, *LockJ.first, LockJ.second);
-                    }
-                    for (PTCallType &LockJ : LJ.PT->WriteLocks) { // intersection:
-                        PT->eraseNonAlias (TotalLock, *LockJ.first, LockJ.second);
-                    }
-                }
-            }
+				for (PTCallType &LockJ : LJ.PT->ReadLocks) { // intersection:
+					PT->eraseNonAlias (ReadLock, *LockJ.first, LockJ.second);
+				}
+				for (PTCallType &LockJ : LJ.PT->WriteLocks) { // intersection:
+					PT->eraseNonAlias (TotalLock, *LockJ.first, LockJ.second);
+				}
+			}
 
-            if (PT == nullptr || !PT->locks()) {
+            if (conflict && (PT == nullptr || !PT->locks())) {
+            	errs() << "NM" << endll;
                 return NoneMover;
             }
         }
@@ -1026,19 +1028,6 @@ private:
         //int globalBlockID = blockID + (1ULL << 16) * ThreadF->index;
         ThreadF->BlockStarts[I] = make_pair (yieldType, blockID);
         return blockID;
-    }
-
-    bool
-    hasOnlyCommutingAtomicOps (AliasSet *AS, Instruction *I)
-    {
-        if (!dyn_cast_or_null<AtomicRMWInst>(I)) return false;
-        for (Instruction* J : Pass->AS2I[AS]) {
-            if (!isCommutingAtomic(I, J)) {
-                return false;
-                break;
-            }
-        }
-        return true;
     }
 
     Instruction *
@@ -1169,20 +1158,20 @@ bool
 LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
                                   Instruction *I, LLVMThread *T)
 {
+
+	errs () <<"  ---  ---  "<<  endll;
     // for all other threads
     for (pair<Function *, LLVMThread *> &Thread : Threads) {
         LLVMThread *T2 = Thread.second;
-        if (T2 == T && T->isSingleton())
-            continue;
+        if (T2 == T && T->isSingleton()) continue;
 
         AliasSet *AS = FindAliasSetForUnknownInst (T2->Aliases, I);
-        if (AS == nullptr)
-            continue;
+        if (AS == nullptr) continue;
 
         DenseSet<int> Blocks;
-
         // for all conflicting J
         for (Instruction *J : AS2I[AS]) {
+            errs () <<"  ---  "<< *I << "\n  ---  "<< *J << endll;
             if (isCommutingAtomic(I, J)) continue;
             if (!I->mayWriteToMemory() && !J->mayWriteToMemory()) continue;
 
@@ -1192,15 +1181,8 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
                 int         blockID = X.second.second;
                 //errs () << *I << endll <<*J << endll << *R <<" ++++++ "<< *R->getNextNode() << endll;
 
-                // if Block is in same process as J, and block can reach J
-                bool LReach = isPotentiallyReachable (R, J);
-//                bool Own = Reach->stCon (R, J) || R == J;
-//                if (Own != LReach) {
-//                    errs () << "Missing reachable: "<< endll <<*R << endll << *J << endll << *R->getParent() <<endll << *J->getParent()<<endll;
-//                }
-                errs () << LReach <<"=Reach("<< "?" <<". "<< blockID <<"): " <<*J << " --> " << *R << endll;
-                if (!LReach)
-                    continue;
+                if (R != J && !isPotentiallyReachable(R, J)) continue;
+                // if R = J or R can reach J
 
                 // add block index to __act
                 Value *num = Constant::getIntegerValue (Int64, APInt(64, blockID));
