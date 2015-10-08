@@ -743,7 +743,7 @@ struct Liptonize : public LiptonPass::Processor {
         if (V.Index == 0) { // Unvisited
             if (Pass->verbose) errs() << name(Area)  <<": "<< B << "\n";
 
-            if (Pass->NoInternal && hasIncomingBackEdge(B)) {
+            if ((Pass->NoInternal || (Area & Post)) && hasIncomingBackEdge(B)) {
             	errs () << "INSERTING Static Loop Yield "<< endll;
 				insertBlock (getFirstNonTerminal(&B), LoopBlock2); // Close cycle
             }
@@ -1015,7 +1015,9 @@ private:
             blockID = ThreadF->BlockStarts[I].second; // reuse block ID
         	if (ExistingType == yieldType || ExistingType == LoopBlock2)
         		return blockID;
-            yieldType = (block_e) ((int)yieldType | (int)ExistingType);
+        	if (yieldType != LoopBlock2) {
+                yieldType = (block_e) ((int)yieldType | (int)ExistingType);
+        	}
             errs () << "WARNING: Overwriting dynamic block "<< name(ExistingType) <<" --> "<< name(yieldType) <<": " << *I << endll;
         }
 

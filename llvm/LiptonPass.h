@@ -143,7 +143,7 @@ public:
     bool                noDyn;      // no dynamic commutativity
     bool                NoLock;
     bool                AllYield;
-    bool                NoInternal = true;
+    bool                NoInternal = false;
 
     ReachPass                      *Reach = nullptr;
 
