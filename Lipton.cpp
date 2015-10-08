@@ -138,7 +138,7 @@ main( int argc, const char *argv[] )
     //Pass *aa3 = createTypeBasedAliasAnalysisPass();
     //Pass *aa4 = createObjCARCAliasAnalysisPass();
     //Pass *aa5 = createGlobalsModRefPass();
-    //Pass *aac = createAliasAnalysisCounterPass();
+    Pass *aac = createAliasAnalysisCounterPass();
     Pass *ba = createBasicAliasAnalysisPass();
     Pass *aae = createAAEvalPass();
     Pass *dlp = new DataLayoutPass(M);
@@ -158,8 +158,10 @@ main( int argc, const char *argv[] )
         pm.add (ba);
     else
         pm.add (aaa);
-    if (verbose)
+    if (verbose) {
         pm.add (aae);
+        pm.add (aac);
+    }
     pm.add (lipton);
 
     pm.run (*M);
