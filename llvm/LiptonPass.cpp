@@ -240,6 +240,7 @@ checkAlias (list<PTCallType> &List, const AliasAnalysis::Location &Loc)
         if (Alias == AliasAnalysis::MustAlias) {
             matches++;
         } else if (Alias != AliasAnalysis::NoAlias) {
+            errs() <<"AA: "<< *Loc.Ptr <<"   " << *L.first->Ptr << " "   <<Alias<< endll;
             return -1;
         }
     }
@@ -742,7 +743,6 @@ struct Liptonize : public LiptonPass::Processor {
         if (V.Index == 0) { // Unvisited
             if (Pass->verbose) errs() << name(Area)  <<": "<< B << "\n";
 
-
             if (Pass->NoInternal && hasIncomingBackEdge(B)) {
             	errs () << "INSERTING Static Loop Yield "<< endll;
 				insertBlock (getFirstNonTerminal(&B), LoopBlock2); // Close cycle
@@ -1145,6 +1145,27 @@ LiptonPass::walkGraph (Module &M)
     }
 }
 
+bool
+obtainFixedCasValue (SmallVector<Value *, 8> &sv,
+					 SmallVector<AtomicCmpXchgInst *, 8> &cs)
+{
+	Constant *c = nullptr;;
+	for (Value *v : sv) {
+		if (AtomicCmpXchgInst *cas = dyn_cast_or_null<AtomicCmpXchgInst>(v)) {
+			Value *op1 = cas->getOperand(1);
+			c = dyn_cast_or_null<Constant> (op1);
+			if (c == nullptr) {
+				return false;
+			} else {
+				cs.push_back (cas);
+			}
+		} else if (!dyn_cast_or_null<Function>(v)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 /**
  * Fills the small vector with arguments for the '__pass' function call
  * The following format is used: '__act(t_1, n_11,..., t2, n_21,....  )',
@@ -1251,7 +1272,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
     	return;
     }
 
-    SmallVector<Value*, 8> sv;
+    SmallVector<Value *, 8> sv;
 
     if (LI.Atomic) { // no yields, just book keeping phase
 
@@ -1286,6 +1307,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
         return;
     }
 
+    SmallVector<AtomicCmpXchgInst *, 8> cs;
     switch (Mover) {
     case LeftMover:
         if (type & LoopBlock)
@@ -1309,10 +1331,30 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
         bool staticNM = conflictingNonMovers (sv, I, T);
         LLASSERT (!sv.empty(), "Unexpected("<< staticNM <<"), no conflicts found for: "<< *I);
 
+
         // if in dynamic conflict (non-commutativity)
         Instruction *NextTerm = I;
         if (!noDyn && !staticNM) {
             CallInst *ActCall = CallInst::Create(Act, sv, "", NextTerm);
+            if (obtainFixedCasValue (sv, cs)) {
+            	Instruction *ValChecks = nullptr;
+            	for (AtomicCmpXchgInst *cas : cs) {
+        			Value *Ptr = cas->getOperand(0);
+        			Constant *C = dyn_cast<Constant>(cas->getOperand(1));
+                    LoadInst *PtrVal = new LoadInst (Ptr, "", NextTerm);
+                    Instruction *New = new ICmpInst(NextTerm,
+									CmpInst::Predicate::ICMP_NE,  PtrVal, C);
+                    if (ValChecks == nullptr) {
+                        ValChecks = New;
+                    } else {
+                    	ValChecks = BinaryOperator::Create(BinaryOperator::BinaryOps::And,
+                    			ValChecks, New, "", NextTerm);
+                    }
+                }
+            	NextTerm = insertDynYield (NextTerm, ValChecks, type, block);
+            }
+
+            // yield if act
             NextTerm = insertDynYield (NextTerm, ActCall, type, block);
         }
         switch (Area) {
