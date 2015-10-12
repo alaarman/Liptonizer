@@ -32,7 +32,7 @@ enum block_e {
     StartBlock  = 0,        // First in thread. May be overwritten (|= is used).
     YieldBlock  = 1 << 0,   // Real yield or phase shift needed
     LoopBlock   = 1 << 1,   // Breaks cycles.
-	LoopBlock2   = 1 << 2,  // Breaks cycles statically
+	LoopBlockStatic   = 1 << 2,  // Breaks cycles statically
     CoincidingBlock = LoopBlock|YieldBlock,
     // Both Yield and Cycle block (either yield should happen to break cycle)
 };
@@ -187,6 +187,7 @@ private:
     void walkGraph (Module &M);
 
     bool conflictingNonMovers (SmallVector<Value*, 8> &sv,
+                               SmallVector<Instruction *, 8> *Is,
                                Instruction *I, LLVMThread *T);
     void initialInstrument (Module &M);
     void finalInstrument (Module &M);

@@ -122,7 +122,7 @@ name ( block_e m )
     case StartBlock:        return "Start Yield";
     case YieldBlock:        return "Global Yield";
     case LoopBlock:         return "Cycle Yield";
-    case LoopBlock2:         return "GlobalCycle Yield";
+    case LoopBlockStatic:         return "GlobalCycle Yield";
     case CoincidingBlock:   return "Global+Cycle Yield";
     default: ASSERT (false, "Missing case: "<< m); return 0;
     }
@@ -240,7 +240,6 @@ checkAlias (list<PTCallType> &List, const AliasAnalysis::Location &Loc)
         if (Alias == AliasAnalysis::MustAlias) {
             matches++;
         } else if (Alias != AliasAnalysis::NoAlias) {
-            errs() <<"AA: "<< *Loc.Ptr <<"   " << *L.first->Ptr << " "   <<Alias<< endll;
             return -1;
         }
     }
@@ -743,9 +742,10 @@ struct Liptonize : public LiptonPass::Processor {
         if (V.Index == 0) { // Unvisited
             if (Pass->verbose) errs() << name(Area)  <<": "<< B << "\n";
 
-            if ((Pass->NoInternal || (Area & Post)) && hasIncomingBackEdge(B)) {
+            if ((Pass->NoInternal || (Area & Post)) &&
+                            ThreadF->Instructions[B.getFirstNonPHI()].Loops) {
             	errs () << "INSERTING Static Loop Yield "<< endll;
-				insertBlock (getFirstNonTerminal(&B), LoopBlock2); // Close cycle
+				insertBlock (getFirstNonTerminal(&B), LoopBlockStatic); // Close cycle
             }
 
             Stack.push_back ( StackElem(Area, &B) );
@@ -884,9 +884,9 @@ private:
     {
         if (Pass->verbose) errs () << name(Area) << *I << " -> \t"<< name(Mover) << "\n";
 
-        if (Pass->NoInternal && isBlockStart(I) == LoopBlock2) {
-        	Area = Bottom;
-        }
+        //if (Pass->NoInternal && isBlockStart(I) == LoopBlockStatic) {
+        //	Area = Bottom;
+        //}
         LI.Area = Area;
         LI.Mover = Mover;
 
@@ -1013,9 +1013,9 @@ private:
         block_e ExistingType = isBlockStart(I);
         if (ExistingType != NoBlock) {
             blockID = ThreadF->BlockStarts[I].second; // reuse block ID
-        	if (ExistingType == yieldType || ExistingType == LoopBlock2)
+        	if (ExistingType == yieldType || ExistingType == LoopBlockStatic)
         		return blockID;
-        	if (yieldType != LoopBlock2) {
+        	if (yieldType != LoopBlockStatic) {
                 yieldType = (block_e) ((int)yieldType | (int)ExistingType);
         	}
             errs () << "WARNING: Overwriting dynamic block "<< name(ExistingType) <<" --> "<< name(yieldType) <<": " << *I << endll;
@@ -1147,25 +1147,51 @@ LiptonPass::walkGraph (Module &M)
     }
 }
 
-bool
-obtainFixedCasValue (SmallVector<Value *, 8> &sv,
-					 SmallVector<AtomicCmpXchgInst *, 8> &cs)
+Constant *
+obtainFixedCasConstant (Instruction *I)
 {
-	Constant *c = nullptr;;
-	for (Value *v : sv) {
-		if (AtomicCmpXchgInst *cas = dyn_cast_or_null<AtomicCmpXchgInst>(v)) {
-			Value *op1 = cas->getOperand(1);
-			c = dyn_cast_or_null<Constant> (op1);
-			if (c == nullptr) {
-				return false;
-			} else {
-				cs.push_back (cas);
-			}
-		} else if (!dyn_cast_or_null<Function>(v)) {
-			return false;
-		}
+    AtomicCmpXchgInst *Cas = dyn_cast_or_null<AtomicCmpXchgInst>(I);
+    if (Cas == nullptr) return nullptr;
+    Value *op1 = Cas->getOperand(1);
+    return dyn_cast_or_null<Constant> (op1);
+}
+
+
+/**
+ * From all conflicting instructions, extract a list of all fixed CAS operations
+ * iff they are the only conflicting instructions that write.
+ *
+ * A fixed CAS, checks for a constant value as swap condition.
+ */
+bool
+obtainFixedCasValue (SmallVector<AtomicCmpXchgInst *, 8> &cs,
+                     SmallVector<Instruction *, 8> &Is,
+                     Instruction *I)
+{
+    bool SeenI = false;
+    if (I->mayWriteToMemory() && obtainFixedCasConstant(I) == nullptr) {
+        return false;
+    }
+
+    errs () <<"Check CAS:"<< *I <<endll;
+	for (Instruction *J : Is) {
+	    errs () <<"- "<< * J <<endll;
+	    if (obtainFixedCasConstant(J) != nullptr) {
+	        if (I->getOperand(0)->getType() != J->getOperand(0)->getType()) {
+                errs () <<"CAS Type mismatch:"<< *I << "  --  "<< * J <<endll;
+                return false;
+            }
+	        cs.push_back (dyn_cast<AtomicCmpXchgInst>(J));
+	    } else if (J->mayWriteToMemory()) {
+            return false;
+        }
+	    SeenI |= I == J;
 	}
-	return true;
+	if (!SeenI && obtainFixedCasConstant(I) != nullptr) {
+	    cs.push_back (dyn_cast<AtomicCmpXchgInst>(I));
+	}
+    errs () <<"Check: "<< !cs.empty() <<endll;
+	return !cs.empty();
 }
 
 /**
@@ -1176,6 +1202,7 @@ obtainFixedCasValue (SmallVector<Value *, 8> &sv,
  */
 bool
 LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
+                                  SmallVector<Instruction *, 8> *Is,
                                   Instruction *I, LLVMThread *T)
 {
     // for all other threads
@@ -1191,6 +1218,8 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
         for (Instruction *J : AS2I[AS]) {
             if (isCommutingAtomic(I, J)) continue;
             if (!I->mayWriteToMemory() && !J->mayWriteToMemory()) continue;
+
+            if (Is != nullptr) Is->push_back(J);
 
             // for all Block starting points TODO: refine to exit points
             for (pair<Instruction *, pair<block_e, int> > X : T2->BlockStarts) {
@@ -1262,15 +1291,16 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
     mover_e Mover = LI.Mover;
     AllocaInst *Phase = T->PhaseVar;
 
-    if (type & LoopBlock2) {
-    	assert (type == LoopBlock2);
+    if (type & LoopBlockStatic) {
+    	assert (type == LoopBlockStatic);
     	errs () << "Static Loop Yield "<< *I << endll;
-    	insertYield (I, YieldGlobal, block);
-        if (Mover & RightMover) {
-            new StoreInst (PRECOMMIT, Phase, I);
-        } else {
-        	new StoreInst (POSTCOMMIT, Phase, I);
-        }
+
+        LoadInst *P = new LoadInst (Phase, "", I);
+
+        type = (block_e) ( (int)type | (int)LoopBlock );
+        Instruction *PhaseTerm = insertDynYield (I, P, type, block);
+    	insertYield (PhaseTerm, YieldGlobal, block);
+        new StoreInst (PRECOMMIT, Phase, PhaseTerm);
     	return;
     }
 
@@ -1292,7 +1322,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
             break;
         case NoneMover: {
             // First collect conflicting non-movers from other threads
-            bool staticNM = conflictingNonMovers (sv, I, T);
+            bool staticNM = conflictingNonMovers (sv, nullptr, I, T);
             LLASSERT (!sv.empty(), "Unexpected ("<< staticNM <<"), no conflicts found for: "<< *I);
 
             Instruction *ThenTerm = I;
@@ -1309,6 +1339,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
         return;
     }
 
+    SmallVector<Instruction *, 8> Is;
     SmallVector<AtomicCmpXchgInst *, 8> cs;
     switch (Mover) {
     case LeftMover:
@@ -1330,33 +1361,35 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
         break;
     case NoneMover: {
         // First collect conflicting non-movers from other threads
-        bool staticNM = conflictingNonMovers (sv, I, T);
+        bool staticNM = conflictingNonMovers (sv, &Is, I, T);
         LLASSERT (!sv.empty(), "Unexpected("<< staticNM <<"), no conflicts found for: "<< *I);
 
-
-        // if in dynamic conflict (non-commutativity)
+		bool fixedCAS = obtainFixedCasValue (cs, Is, I);
         Instruction *NextTerm = I;
-        if (!noDyn && !staticNM) {
-            CallInst *ActCall = CallInst::Create(Act, sv, "", NextTerm);
-            if (obtainFixedCasValue (sv, cs)) {
-            	Instruction *ValChecks = nullptr;
-            	for (AtomicCmpXchgInst *cas : cs) {
-        			Value *Ptr = cas->getOperand(0);
-        			Constant *C = dyn_cast<Constant>(cas->getOperand(1));
-                    LoadInst *PtrVal = new LoadInst (Ptr, "", NextTerm);
-                    Instruction *New = new ICmpInst(NextTerm,
-									CmpInst::Predicate::ICMP_NE,  PtrVal, C);
-                    if (ValChecks == nullptr) {
-                        ValChecks = New;
-                    } else {
-                    	ValChecks = BinaryOperator::Create(BinaryOperator::BinaryOps::And,
-                    			ValChecks, New, "", NextTerm);
-                    }
-                }
-            	NextTerm = insertDynYield (NextTerm, ValChecks, type, block);
-            }
+		if (!noDyn && fixedCAS) {
+			Instruction *ValChecks = nullptr;
+			errs () << "CAS ___________________________________ " << *I <<endll;
+            Value *Ptr = I->getOperand (0);
+            LoadInst *PtrVal = new LoadInst (Ptr, "", NextTerm);
 
-            // yield if act
+            for (AtomicCmpXchgInst *Cas : cs) {
+                errs () << "CAS: "<< *Cas << endll;
+				Constant *C = obtainFixedCasConstant (Cas);
+				Instruction *New = new ICmpInst(NextTerm,
+								CmpInst::Predicate::ICMP_EQ,  PtrVal, C);
+				if (ValChecks == nullptr) {
+					ValChecks = New;
+				} else {
+					ValChecks = BinaryOperator::Create(BinaryOperator::BinaryOps::And,
+							ValChecks, New, "", NextTerm);
+				}
+				break;
+			}
+			NextTerm = insertDynYield (NextTerm, ValChecks, type, block);
+		}
+
+        if (!noDyn && !staticNM) { // if in dynamic conflict (non-commutativity)
+            CallInst *ActCall = CallInst::Create(Act, sv, "", NextTerm);
             NextTerm = insertDynYield (NextTerm, ActCall, type, block);
         }
         switch (Area) {

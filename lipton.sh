@@ -7,7 +7,7 @@ BC=${BC/%cpp/bc}
 
 set -e
 
-clang -O0 -Iinclude -emit-llvm -c $1 -o $BC
+clang -O1 -Iinclude -emit-llvm -Iic3-haskell/include/ -c $1 -o $BC #-O1 for TBAA
 
 llvm-dis $BC
 
