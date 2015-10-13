@@ -116,9 +116,9 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
             errs() << "XXXXXXXXXXXXXXXXXX" << callInstr;
             continue;
         }
-        if (callee->getName() == "pthread_create") {
-            Function *threadF = dyn_cast<Function> (callInstr->getOperand (2));
-            ASSERT (threadF, "Incorrect pthread_create argument?");
+        if (callee->getName() == "__thread_spawn") {
+            Function *threadF = dyn_cast<Function> (callInstr->getOperand (1));
+            ASSERT (threadF, "Incorrect __thread_spawn argument?");
             //Threads (threadF, callInstr); // add to threads (via functor)
             Threads[threadF].push_back (callInstr);
         }
