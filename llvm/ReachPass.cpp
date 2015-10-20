@@ -3,6 +3,7 @@
 
 #include "util/BitMatrix.h"
 #include "util/Util.h"
+#include "llvm/Util.h"
 
 #include <algorithm>    // std::sort
 #include <assert.h>
@@ -105,6 +106,7 @@ ReachPass::runOnSCC(CallGraphSCC &SCC)
     Function *F = node->getFunction ();
     if (!F || F->getBasicBlockList().empty()) return true;
 
+    errs () << F <<endll;
     checkNode (node, SCC);
 
     // get instruction subblocks
@@ -275,7 +277,7 @@ ReachPass::checkNode (CallGraphNode* const node, CallGraphSCC& SCC)
     ASSERT (SCC.isSingular(), "Mutual recursion not supported: " << fname);
 
     for (CallGraphNode::CallRecord rec : *node) {
-        Function* callee = rec.second->getFunction ();
+        Function *callee = rec.second->getFunction ();
         ASSERT (get_name(callee) != fname,
                 "Mutual recursion not supported: " << fname);
     }
