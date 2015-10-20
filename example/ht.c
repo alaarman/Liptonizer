@@ -19,7 +19,6 @@ static int table[N] = { 59, 1, 52, 41, 0, 55, 0, 7, 0, 9 };
 
 //int table[N] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
-
 int
 find_or_insert (int val)
 {
@@ -64,7 +63,16 @@ int value[T] = {  1, 59, };//9, };// 52, 41  };
 int
 main ()
 {
-	pthread_t t[T];
+//    // fill table
+//    find_or_insert (1);
+//    find_or_insert (52);
+//    find_or_insert (41);
+//    find_or_insert (55);
+//    find_or_insert (7);
+//    find_or_insert (9);
+//    find_or_insert (59);
+
+    pthread_t t[T];
 	for (int i = 0; i < T; i++)
 		pthread_create (t + i, NULL, process, (void *) &value[i]);
 
