@@ -110,6 +110,7 @@ struct LLVMInstr {
     mover_e         Mover   = UnknownMover;
     bool            Atomic  = false;
     bool            Loops   = false;
+    bool            FVS     = false; // member of feedback vertex set?
     PThreadType    *PT      = nullptr;
 
     bool
@@ -121,7 +122,6 @@ struct LLVMInstr {
 
 struct LLVMThread {
     Function                                   &F;
-    int                                         Runs = -2;
     vector<Instruction *>                       Starts;
 
     LLVMThread(Function *F)
@@ -130,6 +130,8 @@ struct LLVMThread {
     {
         Aliases = new AliasSetTracker(*AA);
     }
+
+    int NrRuns ();
 
     DenseMap<Instruction *, pair<block_e, int>> BlockStarts;
     AliasSetTracker                            *Aliases;

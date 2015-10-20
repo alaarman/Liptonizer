@@ -170,19 +170,43 @@ LiptonPass::Processor::isBlockStart (Instruction *I)
 	return NoBlock;
 }
 
+int
+LLVMThread::NrRuns ()
+{
+    int Runs = Starts.size ();
+    for (Instruction *I : Starts) {
+        if (I == nullptr)
+            break; // MAIN
+        if (Instructions[I].Loops) {
+            Runs = -1; // potentially infinite
+            errs () << "THREAD: " << F.getName ()
+                    << " (Potentially infinite)" << endll << *I << endll;
+            break;
+        }
+    }
+    return Runs;
+}
+
 bool
 LLVMThread::isSingleton ()
 {
-    assert (Runs != -2);
-    return Runs == 1;
+    return NrRuns() == 1;
 }
 
-// TODO: Left == Left | Bottom
-//inline area_e
-//operator< (area_e a, area_e b)
-//{
-//
-//}
+static Instruction *
+getFirstNonTerminal (Instruction *I)
+{
+    // Skip empty blocks, as we do not want terminators in BlockStarts
+    while (TerminatorInst *T = dyn_cast<TerminatorInst> (I)) {
+        LLASSERT (T->getNumSuccessors () == 1, "No support for branching at loop head or thread start: "<< *I);
+        Instruction *J = T->getSuccessor (0)->getFirstNonPHI ();
+        if (I == J) {
+            return J; // self loop
+        }
+        I = J;
+    }
+    return I;
+}
 
 static bool
 isCommutingAtomic (Instruction *I, Instruction *J)
@@ -263,16 +287,6 @@ removeNonAlias (list<PTCallType> &List, const AliasAnalysis::Location &Lock)
     }
 }
 
-enum state_e {
-    Unvisited   = 0,
-    Stacked     = 1,
-    Visited     = 2,
-
-    OnLoop          = 1 << 10,
-    StackedOnLoop   = Stacked | OnLoop,
-    VisitedOnLoop   = Visited | OnLoop,
-};
-
 /**
  * Thread / instruction reachability processor
  *
@@ -282,8 +296,16 @@ struct Collect : public LiptonPass::Processor {
 
     static StringRef                Action;
 
-    vector<BasicBlock *>                        Stack;
-    DenseMap<BasicBlock *, state_e>             Seen;
+    // See Gabow's SCC algorithm
+    int                                         scc = 0;
+    vector<BasicBlock *>                        S;
+    vector<int>                                 B;
+    DenseMap<BasicBlock *, int>                 I;
+
+    static inline bool New  (int i) { return i == 0; }
+    static inline bool SCC  (int i) { return i < 0; }
+    static inline bool Live (int i) { return i > 0; }
+    inline bool Stack(int i) { return i > 0 && S[i] == nullptr; }
 
     Collect(LiptonPass *Pass) : LiptonPass::Processor(Pass) { }
     ~Collect() { }
@@ -295,45 +317,56 @@ struct Collect : public LiptonPass::Processor {
     }
 
     bool
-    block ( BasicBlock &B )
+    block ( BasicBlock &BB )
     {
-        state_e &seen = Seen[&B];
-        if (Pass->opts.verbose) errs() << Action << ": " << B << seen <<endll;
-        if (seen == Unvisited) {
-            seen = Stacked;
-            Stack.push_back (&B);
-            return true;
-        } else if (seen == Stacked || seen == StackedOnLoop) {
-            seen = (state_e) ((int)seen | (int)OnLoop);
-            // mark all on stack s on-loop:
-            for (BasicBlock *B : Stack) {
-                state_e &Flag = Seen[B];
-                if (Flag & OnLoop) break;
-                Flag = (state_e) ((int)Flag | (int)OnLoop);
+        int         &IB = I[&BB];
+
+        if (Pass->opts.verbose) errs() << Action << ": " << BB << IB <<endll;
+        if (New(IB)) {
+            IB = S.size();
+            B.push_back (S.size());
+            S.push_back (nullptr);      // indicates on-stack (null)
+            return true;                // recurse
+        } else if (Live(IB)) {
+            if (Stack(IB)) {
+                Instruction *I = getFirstNonTerminal(BB.getFirstNonPHI());
+                ThreadF->Instructions[I].FVS = true;
             }
+            while (B.back() > IB) { B.pop_back(); }
         }
         return false;
     }
 
-    void // TODO: Gabow for .Loops && distinguish vertex feedback set instrs
-    deblock ( BasicBlock &B )
+    void
+    deblock ( BasicBlock &BB )
     {
-        state_e &Flag = Seen[&B];
-        if (Flag & OnLoop) {
-            Flag = VisitedOnLoop;
-            for (Instruction &I : B) {
-                ThreadF->Instructions[&I].Loops = true;
+        int         &IB = I[&BB];
+
+        S[IB] = &BB;    // reinsert basic block when backtracking (off stack)
+
+        scc--;
+        if (IB == B.back()) {
+            while (IB <= S.size()) {
+                BasicBlock *XX = S.back ();
+                assert (XX != nullptr);
+                I[XX] = scc;
+                for (Instruction &I : *XX) {
+                    ThreadF->Instructions[&I].Loops = true;
+                }
+                S.pop_back ();
             }
-        } else {
-            Flag = Visited;
+            B.pop_back ();
         }
     }
 
     void
     thread (Function *T)
     {
+        assert (S.empty() && B.empty());
+        scc = 0;
+        I.clear ();
+
         ThreadF = Pass->Threads[T];
-        Seen.clear();
     }
 
     Instruction *
@@ -507,6 +540,12 @@ PThreadType::overlap (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *C
     }
     return this; // locks can simply be dropped
 }
+
+enum state_e {
+    Unvisited   = 0,
+    Stacked     = 1,
+    Visited     = 2,
+};
 
 /**
  * Find paths where locks are held
@@ -1005,21 +1044,6 @@ private:
         //int globalBlockID = blockID + (1ULL << 16) * ThreadF->index;
         ThreadF->BlockStarts[I] = make_pair (yieldType, blockID);
         return blockID;
-    }
-
-    Instruction *
-    getFirstNonTerminal (Instruction *I)
-    {
-        // Skip empty blocks, as we do not want terminators in BlockStarts
-        while (TerminatorInst *T = dyn_cast<TerminatorInst> (I)) {
-            LLASSERT (T->getNumSuccessors () == 1, "No support for branching at loop head or thread start: "<< *I);
-            Instruction *J = T->getSuccessor (0)->getFirstNonPHI ();
-            if (I == J) {
-                return J; // self loop
-            }
-            I = J;
-        }
-        return I;
     }
 
 	bool
@@ -1541,7 +1565,7 @@ LiptonPass::deduceInstances (Module &M)
                 if (!Callee) {
                     Type *Type = Call->getCalledValue()->getType();
                     FunctionType *FT = cast<FunctionType>(cast<PointerType>(Type)->getElementType());
-                    LLASSERT (Callee, "Handle call y value: " << *Call << endll << *FT <<endll);
+                    LLASSERT (Callee, "Unexpected call by value! Undefined function? Handle: " << *Call << endll << *FT <<endll);
                 }
                 if (Callee->getName() == PTHREAD_CREATE) {
                     Function *F = dyn_cast<Function> (Call->getOperand (PTHREAD_CREATE_F_IDX));
@@ -1555,25 +1579,6 @@ LiptonPass::deduceInstances (Module &M)
                 } else {
                     errs () << "handle" <<  *Call << endll;
                 }
-            }
-        }
-    }
-
-    for (pair<Function *, LLVMThread *> &X : Threads) {
-        Function *T = X.first;
-        LLVMThread *TT = X.second;
-
-        TT->Runs = TT->Starts.size ();
-        for (Instruction *I : TT->Starts) {
-            if (I == nullptr)
-                break; // MAIN
-            if (TT->Instructions[I].Loops) {
-                TT->Runs = -1; // potentially infinite
-
-                assert (T);
-                errs () << "THREAD: " << T->getName ()
-                        << " (Potentially infinite)" << endll << *I << endll;
-                break;
             }
         }
     }
