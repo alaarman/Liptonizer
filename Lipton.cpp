@@ -7,7 +7,6 @@
 #include <iostream>
 #include <string>
 
-#include <Andersen.h>
 #include <AndersenAA.h>
 //#include <llvm/LinkAllPasses.h>
 #include <llvm/Pass.h>
@@ -16,6 +15,7 @@
 #include <llvm/InitializePasses.h>
 #include <llvm/PassRegistry.h>
 #include <llvm/PassAnalysisSupport.h>
+#include <llvm/Analysis/AndersenPass.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Analysis/AliasAnalysis.h>
@@ -89,34 +89,31 @@ main( int argc, const char *argv[] )
     }
     M = mod.get();
 
-    bool nolock = false;
-    bool nodyn = false;
-    bool allYield = false;
-    bool staticAll = false;
-    bool verbose = false;
+    Options o;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0) {
-            verbose = true;
+            o.verbose = true;
+        } else if (strcmp(argv[i], "-d") == 0) {
+            o.debug = true;
         } else if (strcmp(argv[i], "-y") == 0) {
-            allYield = true;
+            o.allYield = true;
         } else if (strcmp(argv[i], "-s") == 0) {
-            staticAll = true;
+            o.staticAll = true;
         } else if (strcmp(argv[i], "-n") == 0) {
-            nodyn = true;
+            o.nodyn = true;
         } else if (strcmp(argv[i], "-l") == 0) {
-            nolock = true;
+            o.nolock = true;
         } else {
             usage (argv[0]);
         }
     }
-    if ( nodyn && staticAll ) {
+    if ( o.nodyn && o.staticAll ) {
         usage (argv[0]);
     }
 
     Function *main = M->getFunction("main");
     ASSERT (main, "No 'main' function. Library?\n");
 
-    //initializeTypeBasedAliasAnalysisPass(*R);
     //Pass *indvars = createIndVarSimplifyPass();
     //Pass *lur = createLoopUnrollPass(); // from the planet ...
     //initializeScalarEvolutionAliasAnalysisPass(*R);
@@ -124,8 +121,11 @@ main( int argc, const char *argv[] )
     PassRegistry *R = PassRegistry::getPassRegistry();
     //initializeIndVarSimplifyPass(*R);
     //initializeTypeBasedAliasAnalysisPass(*R);
+    //initializeTypeBasedAliasAnalysisPass(*R);
     X L;
     R->enumerateWith(&L);
+    R->addRegistrationListener(&L);
+    errs() <<" -------------- " <<endll;
 
     PassManager pm;
 
@@ -135,38 +135,40 @@ main( int argc, const char *argv[] )
 
     //Pass *aa1 = createAAEvalPass();
     //Pass *aa2 = createBasicAliasAnalysisPass();
-    //Pass *aa3 = createTypeBasedAliasAnalysisPass();
+    Pass *tbaa = createTypeBasedAliasAnalysisPass();
     //Pass *aa4 = createObjCARCAliasAnalysisPass();
     //Pass *aa5 = createGlobalsModRefPass();
+    //Pass *aaa = new AndersenPass();
+    Pass *aaa = new AndersenAA();
     Pass *aac = createAliasAnalysisCounterPass();
-    Pass *ba = createBasicAliasAnalysisPass();
+    //Pass *ba = createBasicAliasAnalysisPass();
     Pass *aae = createAAEvalPass();
     Pass *dlp = new DataLayoutPass(M);
-    Pass *aaa = new AndersenAA();
     CallGraphWrapperPass *cfgpass = new CallGraphWrapperPass();
-    ReachPass *reach = new ReachPass();
+    //ReachPass *reach = new ReachPass();
 
-    LiptonPass *lipton = new LiptonPass(*reach, "stdin", verbose, staticAll,
-                                        nodyn, nolock, allYield);
+    LiptonPass *lipton = new LiptonPass("stdin", o);
+
 
     //pm.add (indvars);
     //pm.add (lur);
-    pm.add (cfgpass);
-    pm.add (reach);
     pm.add (dlp);
-    if (staticAll)
-        pm.add (ba);
-    else
-        pm.add (aaa);
-    if (verbose) {
-        pm.add (aae);
+    pm.add (tbaa);
+    pm.add (aaa);
+    pm.add (cfgpass);
+    //pm.add (reach);
+    if (o.verbose) {
         pm.add (aac);
     }
+    pm.add (aae);
+    //}
     pm.add (lipton);
 
+    errs() <<" -------------- " <<endll;
+    R->enumerateWith(&L);
     pm.run (*M);
 
-    if (verbose) reach->printClosure();
+    //if (o.verbose) reach->printClosure();
 
     // verify
     verifyModule (*M, &errs());

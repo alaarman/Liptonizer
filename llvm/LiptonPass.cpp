@@ -53,12 +53,14 @@ static Constant *FALSE;
 static Constant *PRECOMMIT = FALSE;
 static Constant *POSTCOMMIT = TRUE;
 
+static const char *ASSERT           = "assert";
 static const char *__YIELD          = "__yield";
 static const char *__YIELD_LOCAL    = "__yield_local";
 static const char *__ACT            = "__act";
 static const char *PTHREAD_YIELD    = "pthread_yield";
-static const char *PTHREAD_CREATE   = "pthread_create";
-static const char *PTHREAD_JOIN     = "pthread_join";
+static const char *PTHREAD_CREATE   = "__thread_spawn";
+static const int   PTHREAD_CREATE_F_IDX = 1;
+static const char *PTHREAD_JOIN     = "__thread_join";
 static const char *PTHREAD_LOCK     = "pthread_mutex_lock";
 static const char *PTHREAD_RLOCK    = "pthread_rwlock_rdlock";
 static const char *PTHREAD_WLOCK    = "pthread_rwlock_wrlock";
@@ -73,14 +75,13 @@ static RegisterPass<LiptonPass> X("lipton", "Lipton reduction");
 
 Function                       *YieldGlobal = nullptr;
 Function                       *YieldLocal = nullptr;
+Function                       *Assert = nullptr;
 Function                       *Act = nullptr;
 Type                           *Int64 = nullptr;
 
 int                             nextBlock = 0;
 
 static const char *SINGLE_THREADED = "singleThreaded";
-static const char *MOVER = "mover";
-static const char *AREA = "area";
 
 static void
 addMetaData (Instruction *I, const char *type, const char *s)
@@ -122,7 +123,6 @@ name ( block_e m )
     case StartBlock:        return "Start Yield";
     case YieldBlock:        return "Global Yield";
     case LoopBlock:         return "Cycle Yield";
-    case LoopBlockStatic:         return "GlobalCycle Yield";
     case CoincidingBlock:   return "Global+Cycle Yield";
     default: ASSERT (false, "Missing case: "<< m); return 0;
     }
@@ -142,24 +142,13 @@ name ( pt_e m, bool add )
 
 LiptonPass::LiptonPass () : ModulePass(ID),
         Name ("out"),
-        verbose(true),
-        staticAll(false),
-        noDyn(false),
-        NoLock(false),
-        AllYield(false),
-        Reach (nullptr)
+        opts(*new Options())
 { }
 
-LiptonPass::LiptonPass (ReachPass &RP, string name, bool v, bool staticBlocks,
-                        bool phase, bool nolock, bool allYield)
+LiptonPass::LiptonPass (string name, Options &opts)
                                                             : ModulePass(ID),
         Name (name),
-        verbose(v),
-        staticAll(staticBlocks),
-        noDyn(phase),
-        NoLock(nolock),
-        AllYield(allYield),
-        Reach (&RP)
+        opts(opts)
 { }
 
 void
@@ -173,9 +162,10 @@ LiptonPass::getAnalysisUsage (AnalysisUsage &AU) const
 block_e
 LiptonPass::Processor::isBlockStart (Instruction *I)
 {
-	auto Start = ThreadF->BlockStarts.find(I);
+    DenseMap<Instruction *, pair<block_e, int>>::iterator Start = ThreadF->BlockStarts.find(I);
 	if (Start != ThreadF->BlockStarts.end()) {
-    	return Start->second.first;
+	    pair<Instruction *, pair<block_e, int>>  &X = *Start;
+	    return X.second.first;
     }
 	return NoBlock;
 }
@@ -308,7 +298,7 @@ struct Collect : public LiptonPass::Processor {
     block ( BasicBlock &B )
     {
         state_e &seen = Seen[&B];
-        if (Pass->verbose) errs() << Action << ": " << B << seen <<endll;
+        if (Pass->opts.verbose) errs() << Action << ": " << B << seen <<endll;
         if (seen == Unvisited) {
             seen = Stacked;
             Stack.push_back (&B);
@@ -325,7 +315,7 @@ struct Collect : public LiptonPass::Processor {
         return false;
     }
 
-    void
+    void // TODO: Gabow for .Loops && distinguish vertex feedback set instrs
     deblock ( BasicBlock &B )
     {
         state_e &Flag = Seen[&B];
@@ -549,7 +539,7 @@ struct LockSearch : public LiptonPass::Processor {
         if (V.State != Unvisited && *V.PT <= *PT) {
             return false;
         }
-        if (Pass->verbose) {
+        if (Pass->opts.verbose) {
             errs() << B << "\n";
             if (V.State != Unvisited) {
                 errs() << " --(lock revisit)--> "<<  B << "\n";
@@ -577,7 +567,7 @@ struct LockSearch : public LiptonPass::Processor {
     void
     deblock ( BasicBlock &B )
     {
-        if (Pass->verbose) PT->print (true, true, false);
+        if (Pass->opts.verbose) PT->print (true, true, false);
 
         LockVisited &V = Seen[&B];
         if (V.State != Stacked) return; // already popped in stack rewind
@@ -605,7 +595,7 @@ struct LockSearch : public LiptonPass::Processor {
     void
     addPThread (CallInst *Call, pt_e kind, bool add)
     {
-        if (Pass->NoLock) return;
+        if (Pass->opts.nolock) return;
         if (kind == ThreadStart && !PT->CorrectThreads) return; // nothing to do
 
         AliasAnalysis::Location L;
@@ -637,12 +627,12 @@ struct LockSearch : public LiptonPass::Processor {
     Instruction *
     handleCall (CallInst *Call)
     {
-        assert (Call && Call->getCalledFunction());
+        Function *Callee = Call->getCalledFunction ();
+        assert (Call && Callee);
         doHandle (Call);
 
         if (Call->getCalledFunction()->getName().endswith(PTHREAD_YIELD)) {
-        } else if (Call->getCalledFunction()->getName().endswith("__assert_rtn")) {
-        } else if (Call->getCalledFunction()->getName().endswith("__assert")) {
+        } else if (Call->getCalledFunction()->getName().endswith(ASSERT)) {
         } else if (Call->getCalledFunction()->getName().endswith("llvm.expect.i64")) {
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_LOCK)) {
             addPThread (Call, TotalLock, true);
@@ -740,28 +730,20 @@ struct Liptonize : public LiptonPass::Processor {
         SeenType &V = Seen[&B];
 
         if (V.Index == 0) { // Unvisited
-            if (Pass->verbose) errs() << name(Area)  <<": "<< B << "\n";
-
-            if ((Pass->NoInternal || (Area & Post)) &&
-                            ThreadF->Instructions[B.getFirstNonPHI()].Loops) {
-            	errs () << "INSERTING Static Loop Yield "<< endll;
-				insertBlock (getFirstNonTerminal(&B), LoopBlockStatic); // Close cycle
-            }
+            if (Pass->opts.verbose) errs() << name(Area)  <<": "<< B << "\n";
 
             Stack.push_back ( StackElem(Area, &B) );
             V.Index = -Stack.size();
 
             return true;
         } else if (V.Index < 0) { // Stack
-            Instruction *Start = getFirstNonTerminal (B.getFirstNonPHI ());
 
-            if (!Pass->NoInternal) {
-            	insertBlock (Start, LoopBlock);                 // Close cycle
-            }
+            Instruction *Start = getFirstNonTerminal (B.getFirstNonPHI ());
+            insertBlock (Start, LoopBlock);                 // Close cycle
 
             StackElem &Previous = Stack[-V.Index - 1];
             if (Previous.Area < Area) {
-                if (Pass->verbose) errs() << name(Area)  <<" --(revisit)--> "<<  name(Previous.Area) <<": "<< B << "\n";
+                if (Pass->opts.verbose) errs() << name(Area)  <<" --(revisit)--> "<<  name(Previous.Area) <<": "<< B << "\n";
                 while (true) { // rewind stack
                    StackElem &X = Stack.back ();
                    if (&X == &Previous) break;
@@ -773,7 +755,7 @@ struct Liptonize : public LiptonPass::Processor {
             }
         } else {
             if (V.Area < Area) {
-                if (Pass->verbose) errs() << name(Area)  <<" --(revisit)--> "<<  name(V.Area) <<": "<< B << "\n";
+                if (Pass->opts.verbose) errs() << name(Area)  <<" --(revisit)--> "<<  name(V.Area) <<": "<< B << "\n";
                 // re-explore visited blocks:
                 Stack.push_back ( StackElem(Area, &B) );
                 V.Index = -Stack.size();
@@ -848,8 +830,7 @@ struct Liptonize : public LiptonPass::Processor {
             assert (!ThreadF->Instructions[Call].Atomic);
             doHandle (LI, Call, RightMover); // force (dynamic) yield (for Post/Top)
         } else if (Call->getCalledFunction()->getName().endswith(ATOMIC_END)) {
-        } else if (Call->getCalledFunction()->getName().endswith("__assert_rtn")) {
-        } else if (Call->getCalledFunction()->getName().endswith("__assert")) {
+        } else if (Call->getCalledFunction()->getName().endswith(ASSERT)) {
         } else if (Call->getCalledFunction()->getName().endswith("llvm.expect.i64")) {
         } else {
             return nullptr;
@@ -882,26 +863,25 @@ private:
     Instruction *
     doHandle (LLVMInstr &LI, Instruction *I, mover_e Mover) // may overwrite less dynamic blocks
     {
-        if (Pass->verbose) errs () << name(Area) << *I << " -> \t"<< name(Mover) << "\n";
+        if (Pass->opts.verbose) errs () << name(Area) << *I << " -> \t"<< name(Mover) << "\n";
 
-        //if (Pass->NoInternal && isBlockStart(I) == LoopBlockStatic) {
-        //	Area = Bottom;
-        //}
         LI.Area = Area;
         LI.Mover = Mover;
 
-        addMetaData (I, AREA, name(Area));
+        addMetaData (I, name(Area), "");
         if (Mover != BothMover) {
-            addMetaData (I, MOVER, name(Mover));
+            addMetaData (I, name(Mover), "");
         }
         if (LI.singleThreaded()) {
             addMetaData (I, SINGLE_THREADED, "");
         }
 
-        if (Pass->AllYield && !I->isTerminator() && dyn_cast_or_null<PHINode>(I) == nullptr) {
+        if (Pass->opts.allYield && !I->isTerminator() && dyn_cast_or_null<PHINode>(I) == nullptr) {
             Instruction *Start = getFirstNonTerminal (I);
             insertBlock (Start, LoopBlock);
         }
+
+        if (LI.singleThreaded()) return I; // single threaded no switch!
 
         switch (Mover) {
         case RightMover:
@@ -1013,26 +993,18 @@ private:
         block_e ExistingType = isBlockStart(I);
         if (ExistingType != NoBlock) {
             blockID = ThreadF->BlockStarts[I].second; // reuse block ID
-        	if (ExistingType == yieldType || ExistingType == LoopBlockStatic)
+        	if (ExistingType == yieldType)
         		return blockID;
-        	if (yieldType != LoopBlockStatic) {
-                yieldType = (block_e) ((int)yieldType | (int)ExistingType);
-        	}
+            yieldType = (block_e) ((int)yieldType | (int)ExistingType);
             errs () << "WARNING: Overwriting dynamic block "<< name(ExistingType) <<" --> "<< name(yieldType) <<": " << *I << endll;
         }
 
-        if (Pass->verbose) errs () << "New " << name(yieldType) << " block: " << *I << "\n";
+        if (Pass->opts.verbose) errs () << "New " << name(yieldType) << " block: " << *I << "\n";
 
         //assert (blockID < (1ULL << 16));
         //int globalBlockID = blockID + (1ULL << 16) * ThreadF->index;
         ThreadF->BlockStarts[I] = make_pair (yieldType, blockID);
         return blockID;
-    }
-
-    Instruction *
-    getFirstNonTerminal (BasicBlock *B)
-    {
-        return getFirstNonTerminal(B->getFirstNonPHI());
     }
 
     Instruction *
@@ -1085,20 +1057,17 @@ LiptonPass::walkGraph ( Instruction *I )
         return;
     }
 
-    if (CallInst *call = dyn_cast<CallInst>(I)) {
-        DenseMap<Instruction *, Function *> callRecords = Reach->callRecords;
-        if (callRecords.find (call) != callRecords.end ()) {
-            walkGraph (*callRecords[call]);
-        } else if (call->getCalledFunction()) {
-           Instruction *Next = handle->handleCall (call);
+    if (CallInst *Call = dyn_cast<CallInst>(I)) {
+        Function *Callee = Call->getCalledFunction ();
+        if (!Callee->isIntrinsic() && !Callee->isDeclaration()) {
+            walkGraph (*Callee);
+        } else {
+           Instruction *Next = handle->handleCall (Call);
            if (Next == nullptr) {
-               assert (call && call->getCalledFunction());
-               errs() << "Handle library call: "<< call->getCalledFunction()->getName() <<"\n";
+               errs() << "Handle library call: "<< Call->getCalledFunction()->getName() <<"\n";
            } else {
                I = Next;
            }
-        } else {
-            errs() << "Indirect call: "<< call <<"\n";
         }
     } else {
         assert (!I->isTerminator());
@@ -1122,7 +1091,7 @@ void
 LiptonPass::walkGraph ( Function &F )
 {
     assert (&F);
-    if (verbose) errs() << F.getName() << "\n";
+    if (opts.verbose) errs() << F.getName() << "\n";
     walkGraph (F.getEntryBlock());
 }
 
@@ -1135,13 +1104,9 @@ LiptonPass::walkGraph (Module &M)
     handle = &processor;
 
     errs () <<" -------------------- "<< typeid(ProcessorT).name() <<" -------------------- "<< endll;
-    for (pair<Function *, vector<Instruction *>> &X : Reach->Threads) {
+    for (pair<Function *, LLVMThread *> &X : Threads) { // TODO: extended while iterting
         Function *T = X.first;
 
-        // Create new LLVM thread if it doesn't exist
-        if (Threads.find(T) == Threads.end()) {
-            Threads[T] = new LLVMThread(T, Threads.size());
-        }
         processor.thread (T);
         walkGraph (*T);
     }
@@ -1166,19 +1131,19 @@ obtainFixedCasConstant (Instruction *I)
 bool
 obtainFixedCasValue (SmallVector<AtomicCmpXchgInst *, 8> &cs,
                      SmallVector<Instruction *, 8> &Is,
-                     Instruction *I)
+                     Instruction *I, bool verbose)
 {
     bool SeenI = false;
     if (I->mayWriteToMemory() && obtainFixedCasConstant(I) == nullptr) {
         return false;
     }
 
-    errs () <<"Check CAS:"<< *I <<endll;
+    if (verbose) errs () <<"Check CAS:"<< *I <<endll;
 	for (Instruction *J : Is) {
-	    errs () <<"- "<< * J <<endll;
+	    if (verbose) errs () <<"\t"<< * J <<endll;
 	    if (obtainFixedCasConstant(J) != nullptr) {
 	        if (I->getOperand(0)->getType() != J->getOperand(0)->getType()) {
-                errs () <<"CAS Type mismatch:"<< *I << "  --  "<< * J <<endll;
+	            if (verbose) errs () <<"\tCAS Type mismatch:"<< *I << "  --  "<< * J <<endll;
                 return false;
             }
 	        cs.push_back (dyn_cast<AtomicCmpXchgInst>(J));
@@ -1190,7 +1155,6 @@ obtainFixedCasValue (SmallVector<AtomicCmpXchgInst *, 8> &cs,
 	if (!SeenI && obtainFixedCasConstant(I) != nullptr) {
 	    cs.push_back (dyn_cast<AtomicCmpXchgInst>(I));
 	}
-    errs () <<"Check: "<< !cs.empty() <<endll;
 	return !cs.empty();
 }
 
@@ -1256,18 +1220,41 @@ static void
 insertYield (Instruction* I, Function *YieldF, int block)
 {
     Value *blockId = ConstantInt::get (YieldF->getFunctionType ()->getParamType (0), block);
-
     CallInst::Create (YieldF, blockId, "", I);
 }
 
+static void
+insertLoopYields (Instruction *I, area_e Area, int block, AllocaInst* Phase)
+{
+    if (Area == Top) {
+        TerminatorInst* ThenTerm;
+        TerminatorInst* ElseTerm;
+        LoadInst* P = new LoadInst (Phase, "", I);
+        SplitBlockAndInsertIfThenElse (P, I, &ThenTerm, &ElseTerm);
+
+        // then (post)
+        new StoreInst (PRECOMMIT, Phase, ThenTerm);
+        insertYield (ThenTerm, YieldGlobal, block);
+
+        // else (pre)
+        insertYield (ElseTerm, YieldLocal, block);
+    } else if (Area == Post) {
+        new StoreInst (PRECOMMIT, Phase, I);
+        insertYield (I, YieldGlobal, block);
+    } else {
+        insertYield (I, YieldLocal, block);
+    }
+}
+
 static TerminatorInst *
-insertDynYield (Instruction* I, Instruction *Cond, block_e type, int block)
+insertDynYield (Instruction *I, Instruction *Cond, area_e Area, block_e type,
+                int block, AllocaInst *Phase)
 {
     TerminatorInst* ThenTerm;
     TerminatorInst* ElseTerm;
     if (type & LoopBlock) {
         SplitBlockAndInsertIfThenElse (Cond, I, &ThenTerm, &ElseTerm);
-        insertYield (ElseTerm, YieldLocal, block);
+        insertLoopYields (ElseTerm, Area, block, Phase);
     } else {
         ThenTerm = SplitBlockAndInsertIfThen (Cond, I, false);
     }
@@ -1275,33 +1262,32 @@ insertDynYield (Instruction* I, Instruction *Cond, block_e type, int block)
 }
 
 void
+checkAssert (bool v, Instruction *I, AllocaInst* Phase, area_e Area)
+{
+    if (!v) return;
+
+    Instruction *P = new LoadInst (Phase, "", I);
+    if (Area == Pre)
+        P = new ICmpInst(I, CmpInst::Predicate::ICMP_EQ,  P, PRECOMMIT);
+    CallInst::Create (Assert, P, "", I);
+}
+
+void
 LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block)
 {
     assert(POSTCOMMIT == TRUE);
 
-    if (type == StartBlock) {
-        return;
-    } else if (type == LoopBlock) {
-        insertYield (I, YieldLocal, block);
-        return;
-    }
-
+    errs () << "PROCESSSSSSSSSSSSSSSSSSSSS: "<< *I << endll;
     LLVMInstr &LI = T->Instructions[I];
     area_e Area = LI.Area;
     mover_e Mover = LI.Mover;
     AllocaInst *Phase = T->PhaseVar;
 
-    if (type & LoopBlockStatic) {
-    	assert (type == LoopBlockStatic);
-    	errs () << "Static Loop Yield "<< *I << endll;
-
-        LoadInst *P = new LoadInst (Phase, "", I);
-
-        type = (block_e) ( (int)type | (int)LoopBlock );
-        Instruction *PhaseTerm = insertDynYield (I, P, type, block);
-    	insertYield (PhaseTerm, YieldGlobal, block);
-        new StoreInst (PRECOMMIT, Phase, PhaseTerm);
-    	return;
+    if (type == StartBlock) {
+        return;
+    } else if (type == LoopBlock) {
+        insertLoopYields (I, Area, block, Phase);
+        return;
     }
 
     SmallVector<Value *, 8> sv;
@@ -1339,36 +1325,40 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
         return;
     }
 
-    SmallVector<Instruction *, 8> Is;
-    SmallVector<AtomicCmpXchgInst *, 8> cs;
+    Instruction *NextTerm = I;
     switch (Mover) {
     case LeftMover:
         if (type & LoopBlock)
-            insertYield (I, YieldLocal, block);
+            insertLoopYields (I, Area, block, Phase);
         if (Area != Post)
             new StoreInst(POSTCOMMIT, Phase, I);
+        checkAssert (opts.debug, NextTerm, Phase, Post);
         break;
     case RightMover:
-        if (Area == Post) {
-            new StoreInst(PRECOMMIT, Phase, I);
-            insertYield (I, YieldGlobal, block);
-        } else if (Area == Top) {
+        if (Area == Top) {
             LoadInst *P = new LoadInst (Phase, "", I);
-            Instruction *ThenTerm = insertDynYield (I, P, type, block);
-            new StoreInst(PRECOMMIT, Phase, ThenTerm);
-            insertYield (ThenTerm, YieldGlobal, block);
+            NextTerm = insertDynYield (I, P, Area, type, block, Phase);
+        }
+        if (Area & Post) {
+            checkAssert (opts.debug, NextTerm, Phase, Post);
+            new StoreInst(PRECOMMIT, Phase, NextTerm);
+            insertYield (NextTerm, YieldGlobal, block);
+        } else if (type & LoopBlock) {
+            checkAssert (opts.debug, I, Phase, Pre);
+            insertLoopYields (I, Area, block, Phase);
         }
         break;
     case NoneMover: {
         // First collect conflicting non-movers from other threads
+        SmallVector<Instruction *, 8> Is;
+        SmallVector<AtomicCmpXchgInst *, 8> cs;
         bool staticNM = conflictingNonMovers (sv, &Is, I, T);
         LLASSERT (!sv.empty(), "Unexpected("<< staticNM <<"), no conflicts found for: "<< *I);
 
-		bool fixedCAS = obtainFixedCasValue (cs, Is, I);
-        Instruction *NextTerm = I;
-		if (!noDyn && fixedCAS) {
+		bool fixedCAS = obtainFixedCasValue (cs, Is, I, opts.verbose);
+
+		if (!opts.nodyn && fixedCAS) {
 			Instruction *ValChecks = nullptr;
-			errs () << "CAS ___________________________________ " << *I <<endll;
             Value *Ptr = I->getOperand (0);
             LoadInst *PtrVal = new LoadInst (Ptr, "", NextTerm);
 
@@ -1385,26 +1375,38 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
 				}
 				break;
 			}
-			NextTerm = insertDynYield (NextTerm, ValChecks, type, block);
+			NextTerm = insertDynYield (NextTerm, ValChecks, Area, type, block, Phase);
 		}
 
-        if (!noDyn && !staticNM) { // if in dynamic conflict (non-commutativity)
+        if (!opts.nodyn && !staticNM) { // if in dynamic conflict (non-commutativity)
             CallInst *ActCall = CallInst::Create(Act, sv, "", NextTerm);
-            NextTerm = insertDynYield (NextTerm, ActCall, type, block);
+            NextTerm = insertDynYield (NextTerm, ActCall, Area, type, block, Phase);
         }
         switch (Area) {
         case Top: {
             LoadInst *P = new LoadInst (Phase, "", NextTerm);
-            Instruction *PhaseTerm = insertDynYield (NextTerm, P, type, block);
+            Instruction *PhaseTerm = insertDynYield (NextTerm, P, Area, type, block, Phase);
+
+            // then branch (post)
+            checkAssert (opts.debug, PhaseTerm, Phase, Post);
             new StoreInst (PRECOMMIT, Phase, PhaseTerm); // Temporarily for yield
             insertYield (PhaseTerm, YieldGlobal, block);
-            // in NextTerm:
+
+            // merge branch (pre, because post was set to pre in then branch)
+            checkAssert (opts.debug, NextTerm, Phase, Pre);
             new StoreInst(POSTCOMMIT, Phase, NextTerm);
             break; }
         case Post:
-            insertYield (NextTerm, YieldGlobal, block); // fallthrough:
+            checkAssert (opts.debug, NextTerm, Phase, Post);
+
+            new StoreInst (PRECOMMIT, Phase, NextTerm); // Temporarily for yield
+            insertYield (NextTerm, YieldGlobal, block);
+            new StoreInst(POSTCOMMIT, Phase, NextTerm);
+            break;
         case Pre:
         case Bottom:
+            checkAssert (opts.debug, NextTerm, Phase, Pre);
+
             new StoreInst(POSTCOMMIT, Phase, NextTerm);
             break;
         default: { ASSERT (false, "Missing case: "<< Area); }
@@ -1421,30 +1423,44 @@ LiptonPass::initialInstrument (Module &M)
 {
     // Add '__act' and '__yield' functions
     Type *Int = Type::getInt32Ty (M.getContext ());
+    Type *Bool = Type::getInt1Ty (M.getContext ());
     Type *Void = FunctionType::getVoidTy (M.getContext ());
     Constant *C = M.getOrInsertFunction (__YIELD, Void, Int, (Type*)(0));
-    YieldGlobal = cast<Function> (C);
+    assert (C);
+    YieldGlobal = dyn_cast_or_null<Function> (C);
+    LLASSERT (YieldGlobal, "Cast failed: "<< *C);
 
+    Constant *C4 = M.getOrInsertFunction (ASSERT, Int, Bool, (Type*)(0));
+    assert (C4);
+    Assert = dyn_cast_or_null<Function> (C4);
+    LLASSERT (Assert, "Cast failed: "<< *C4);
 
     Constant *C3 = M.getOrInsertFunction (__YIELD_LOCAL, Void, Int, (Type*)(0));
-    YieldLocal = cast<Function> (C3);
+    assert (C3);
+    YieldLocal = dyn_cast_or_null<Function> (C3);
+    LLASSERT (YieldLocal, "Cast failed: "<< *C3);
 
-    Type *Bool = Type::getInt1Ty (M.getContext ());
     Constant *C2 = M.getOrInsertFunction (__ACT, FunctionType::get (Bool, true));
-    Act = cast<Function> (C2);
+    assert (C2);
+    Act = dyn_cast_or_null<Function> (C2);
+    LLASSERT (Act, "Cast failed: "<< *C2);
+
     Int64 = Type::getInt64Ty(M.getContext());
 }
 
 void
 LiptonPass::staticYield (LLVMThread *T, Instruction *I, block_e type, int block)
 {
+    LLVMInstr &LI = T->Instructions[I];
     if (type == StartBlock) {
         return;
     } else if (type == LoopBlock) {
-        insertYield (I, YieldLocal, block);
+        if (LI.Area & Post) {
+            insertYield (I, YieldGlobal, block);
+        } else {
+            insertYield (I, YieldLocal, block);
+        }
     } else { // YieldBlock or combinations
-        LLVMInstr &LI = T->Instructions[I];
-
         if (LI.Atomic) {
             if (type & LoopBlock)
                 insertYield (I, YieldLocal, block);
@@ -1453,7 +1469,11 @@ LiptonPass::staticYield (LLVMThread *T, Instruction *I, block_e type, int block)
         if ((LI.Mover == RightMover || LI.Mover == NoneMover) && (LI.Area & Post)) {
             insertYield (I, YieldGlobal, block);
         } else if (type & LoopBlock) {
-            insertYield (I, YieldLocal, block);
+            if (LI.Area & Post) {
+                insertYield (I, YieldGlobal, block);
+            } else {
+                insertYield (I, YieldLocal, block);
+            }
         }
     }
 }
@@ -1467,7 +1487,7 @@ LiptonPass::finalInstrument (Module &M)
     PRECOMMIT = FALSE;
     POSTCOMMIT = TRUE;
 
-    if (staticAll) {
+    if (opts.staticAll) {
         for (pair<Function *, LLVMThread *> X : Threads) {
             LLVMThread *T = X.second;
 
@@ -1505,14 +1525,46 @@ LiptonPass::finalInstrument (Module &M)
 }
 
 void
-LiptonPass::deduceInstances ()
+LiptonPass::deduceInstances (Module &M)
 {
-    for (pair<Function *, vector<Instruction *>> &X : Reach->Threads) {
-        Function *T = X.first;
-        LLVMThread *TT = Threads[T];
+    Function *Main = M.getFunction ("main");
+    ASSERT (Main, "No main function in module");
+    LLVMThread* TT = new LLVMThread (Main);
+    Threads[Main] = TT;
+    TT->Starts.push_back (nullptr);
+    for (Function &F : M) {
+        for (BasicBlock &B : F) {
+            for (Instruction &I : B) {
+                CallInst *Call = dyn_cast_or_null<CallInst>(&I);
+                if (!Call) continue;
+                Function *Callee = Call->getCalledFunction();
+                if (!Callee) {
+                    Type *Type = Call->getCalledValue()->getType();
+                    FunctionType *FT = cast<FunctionType>(cast<PointerType>(Type)->getElementType());
+                    LLASSERT (Callee, "Handle call y value: " << *Call << endll << *FT <<endll);
+                }
+                if (Callee->getName() == PTHREAD_CREATE) {
+                    Function *F = dyn_cast<Function> (Call->getOperand (PTHREAD_CREATE_F_IDX));
+                    ASSERT (F, "Incorrect pthread_create argument?");
+                    //Threads (threadF, callInstr); // add to threads (via functor)
+                    if (Threads.find(F) == Threads.end()) {
+                        Threads[F] = new LLVMThread (F);
+                        errs () << "ADDED thread: " << F->getName() <<endll;
+                    }
+                    Threads[F]->Starts.push_back (Call);
+                } else {
+                    errs () << "handle" <<  *Call << endll;
+                }
+            }
+        }
+    }
 
-        TT->Runs = Reach->Threads[T].size ();
-        for (Instruction *I : Reach->Threads[T]) {
+    for (pair<Function *, LLVMThread *> &X : Threads) {
+        Function *T = X.first;
+        LLVMThread *TT = X.second;
+
+        TT->Runs = TT->Starts.size ();
+        for (Instruction *I : TT->Starts) {
             if (I == nullptr)
                 break; // MAIN
             if (TT->Instructions[I].Loops) {
@@ -1532,14 +1584,14 @@ LiptonPass::runOnModule (Module &M)
 {
     AA = &getAnalysis<AliasAnalysis> ();
 
+    deduceInstances (M);
+
     // Statically find instructions for which invariantly a lock is held
     walkGraph<LockSearch> (M);
 
     // Collect thread reachability info +
     // Collect movability info
     walkGraph<Collect> (M);
-
-    deduceInstances ();
 
     // Identify and number blocks statically
     // (assuming all dynamic non-movers are static non-movers)
@@ -1550,6 +1602,7 @@ LiptonPass::runOnModule (Module &M)
     // Add '__act' and '__yield' function definitions
     initialInstrument (M);
 
+    errs () <<" -------------------- "<< "Instrumentation" <<" -------------------- "<< endll;
     // Insert dynamic yields
     finalInstrument (M);
 

@@ -32,7 +32,6 @@ enum block_e {
     StartBlock  = 0,        // First in thread. May be overwritten (|= is used).
     YieldBlock  = 1 << 0,   // Real yield or phase shift needed
     LoopBlock   = 1 << 1,   // Breaks cycles.
-	LoopBlockStatic   = 1 << 2,  // Breaks cycles statically
     CoincidingBlock = LoopBlock|YieldBlock,
     // Both Yield and Cycle block (either yield should happen to break cycle)
 };
@@ -63,6 +62,14 @@ enum pt_e {
 
 static AliasAnalysis                  *AA;
 
+struct Options {
+    bool nolock = false;
+    bool nodyn = false;
+    bool allYield = false;
+    bool staticAll = false;
+    bool verbose = false;
+    bool debug = false;
+};
 
 typedef pair<const AliasAnalysis::Location *, CallInst *> PTCallType;
 
@@ -114,13 +121,12 @@ struct LLVMInstr {
 
 struct LLVMThread {
     Function                                   &F;
-    int                                         index;
     int                                         Runs = -2;
+    vector<Instruction *>                       Starts;
 
-    LLVMThread(Function *F, int i)
+    LLVMThread(Function *F)
     :
-        F(*F),
-        index(i)
+        F(*F)
     {
         Aliases = new AliasSetTracker(*AA);
     }
@@ -138,22 +144,16 @@ class LiptonPass : public ModulePass {
 public:
     static char         ID;
     string              Name;
-    bool                verbose;
-    bool                staticAll;  // no phase && dynamic commutativity
-    bool                noDyn;      // no dynamic commutativity
-    bool                NoLock;
-    bool                AllYield;
-    bool                NoInternal = false;
 
-    ReachPass                      *Reach = nullptr;
+    Options            &opts;
+
+    //ReachPass                      *Reach = nullptr;
 
     LiptonPass();
-    LiptonPass(ReachPass &RP, string name, bool v, bool staticBlocks,
-               bool phase, bool noLock, bool allYield);
+    LiptonPass(string name, Options &opts);
 
     DenseMap<AliasSet *, list<Instruction *>>       AS2I;
     DenseMap<Function *, LLVMThread *>              Threads;
-
 
     struct Processor {
         LiptonPass                 *Pass;
@@ -191,10 +191,9 @@ private:
                                Instruction *I, LLVMThread *T);
     void initialInstrument (Module &M);
     void finalInstrument (Module &M);
-    void deduceInstances ();
+    void deduceInstances (Module &M);
     void refineAliasSets();
 };
-
 
 }
 
