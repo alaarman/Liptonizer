@@ -118,14 +118,14 @@ main( int argc, const char *argv[] )
     //Pass *lur = createLoopUnrollPass(); // from the planet ...
     //initializeScalarEvolutionAliasAnalysisPass(*R);
 
-    PassRegistry *R = PassRegistry::getPassRegistry();
+    //PassRegistry *R = PassRegistry::getPassRegistry();
     //initializeIndVarSimplifyPass(*R);
     //initializeTypeBasedAliasAnalysisPass(*R);
     //initializeTypeBasedAliasAnalysisPass(*R);
     X L;
-    R->enumerateWith(&L);
-    R->addRegistrationListener(&L);
-    errs() <<" -------------- " <<endll;
+    //R->enumerateWith(&L);
+    //R->addRegistrationListener(&L);
+    //errs() <<" -------------- " <<endll;
 
     PassManager pm;
 
@@ -159,13 +159,13 @@ main( int argc, const char *argv[] )
     //pm.add (reach);
     if (o.verbose) {
         pm.add (aac);
+        pm.add (aae);
     }
-    pm.add (aae);
     //}
     pm.add (lipton);
 
-    errs() <<" -------------- " <<endll;
-    R->enumerateWith(&L);
+    //errs() <<" -------------- " <<endll;
+    //R->enumerateWith(&L);
     pm.run (*M);
 
     //if (o.verbose) reach->printClosure();
