@@ -383,8 +383,11 @@ struct Collect : public LiptonPass::Processor {
     Instruction *
     process (Instruction *I)
     {
-        if (I->isTerminator() || !I->mayReadOrWriteMemory() ||
-                isa<DbgInfoIntrinsic>(I)) {
+        if ( I->isTerminator() ||
+                dyn_cast_or_null<PHINode>(I) != nullptr ||
+                !I->mayReadOrWriteMemory() ||
+                isa<DbgInfoIntrinsic>(I) ||
+                ThreadF->Instructions[I].singleThreaded() ) {
             return I;
         }
 
@@ -869,39 +872,46 @@ struct Liptonize : public LiptonPass::Processor {
         assert (Call && Call->getCalledFunction());
 
         LLVMInstr &LI = ThreadF->Instructions[Call];
-        if (LI.singleThreaded () &&
-        	!Call->getCalledFunction()->getName().endswith(PTHREAD_CREATE)) {
-            doHandle (LI, Call, BothMover);
-            return Call;
-        }
 
-        if (Call->getCalledFunction()->getName().endswith(PTHREAD_YIELD)) {
+        mover_e Mover;
+
+        if (Call->getCalledFunction()->getName().endswith(PTHREAD_CREATE)) {
+            Mover = LeftMover;
+        } else if (LI.singleThreaded()) {
+            Mover = BothMover;
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_YIELD)) {
             errs () << "WARNING: pre-existing Yield call: "<< *Call <<"\n";
             Area = Bottom;
+            return Call;
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_LOCK)) {
-            doHandle (LI, Call, RightMover);
+            Mover = RightMover;
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_RLOCK)) {
-            doHandle (LI, Call, RightMover);
+            Mover = RightMover;
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_WLOCK)) {
-            doHandle (LI, Call, RightMover);
+            Mover = RightMover;
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_RW_UNLOCK)) {
-            doHandle (LI, Call, LeftMover);
+            Mover = LeftMover;
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_UNLOCK)) {
-            doHandle (LI, Call, LeftMover);
-        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_CREATE)) {
-            doHandle (LI, Call, LeftMover);
+            Mover = LeftMover;
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_JOIN)) {
-            doHandle (LI, Call, RightMover);
-        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_MUTEX_INIT)) {
+            Mover = RightMover;
         } else if (Call->getCalledFunction()->getName().endswith(ATOMIC_BEGIN)) {
             assert (!ThreadF->Instructions[Call].Atomic);
-            doHandle (LI, Call, RightMover); // force (dynamic) yield (for Post/Top)
+            Mover = RightMover; // force (dynamic) yield (for Post/Top)
         } else if (Call->getCalledFunction()->getName().endswith(ATOMIC_END)) {
+            return Call;
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_MUTEX_INIT)) {
+            return Call;
         } else if (Call->getCalledFunction()->getName().endswith(ASSERT)) {
+            return Call;
         } else if (Call->getCalledFunction()->getName().endswith("llvm.expect.i64")) {
+            return Call;
         } else {
             return nullptr;
         }
+
+        doHandle (LI, Call, Mover);
+
         return Call;
     }
 
@@ -910,16 +920,9 @@ struct Liptonize : public LiptonPass::Processor {
     process (Instruction *I)
     {
         LLVMInstr &LI = ThreadF->Instructions[I];
-        if ((LI.Area == Pre && Area == Post) ||
-            (LI.Area == Post && Area == Pre)) // 0 iff undefined
-            Area = Top;
 
         mover_e Mover = LI.Mover;
-
-        if (LI.singleThreaded() || I->isTerminator() ||
-									dyn_cast_or_null<PHINode>(I) != nullptr) {
-            Mover = BothMover;
-        } else if (Mover == -1) {
+        if (Mover == -1) {
             Mover = movable (LI, I);
         }
 
@@ -932,6 +935,9 @@ private:
     {
         if (Pass->opts.verbose) errs () << name(Area) << *I << " -> \t"<< name(Mover) << "\n";
 
+        if ((LI.Area == Pre && Area == Post) ||
+            (LI.Area == Post && Area == Pre)) // 0 iff undefined
+            Area = Top;
         LI.Area = Area;
         LI.Mover = Mover;
 
@@ -947,8 +953,6 @@ private:
             Instruction *Start = getFirstNonTerminal (I);
             insertBlock (Start, LoopBlock);
         }
-
-        if (LI.singleThreaded()) return I; // single threaded no switch!
 
         switch (Mover) {
         case RightMover:
@@ -1624,17 +1628,17 @@ LiptonPass::runOnModule (Module &M)
     // Statically find instructions for which invariantly a lock is held
     walkGraph<LockSearch> (M);
 
-    int z = 0;
-    for (Function &F : M) {
-        if (Threads.find(&F) == Threads.end()) continue;
-        LLVMThread *T = Threads[&F];
-        for (BasicBlock &B : F) {
-            for (Instruction &I : B) {
-                z += (int) T->Instructions[&I].Area;
-                //errs () << T->Instructions[&I].PT <<"   "<< I << endll;
-            }
-        }
-    }
+//    int z = 0;
+//    for (Function &F : M) {
+//        if (Threads.find(&F) == Threads.end()) continue;
+//        LLVMThread *T = Threads[&F];
+//        for (BasicBlock &B : F) {
+//            for (Instruction &I : B) {
+//                z += (int) T->Instructions[&I].Area;
+//                //errs () << T->Instructions[&I].PT <<"   "<< I << endll;
+//            }
+//        }
+//    }
 
     // Collect thread reachability info +
     // Collect movability info
