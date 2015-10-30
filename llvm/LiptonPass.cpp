@@ -1344,7 +1344,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
 {
     assert(POSTCOMMIT == TRUE);
 
-    errs () << "PROCESSSSSSSSSSSSSSSSSSSSS: "<< *I << endll;
+    if (opts.verbose) errs () << "Dynamic Yield: "<< *I << endll;
     LLVMInstr &LI = T->getInstruction(I);
     area_e Area = LI.Area;
     mover_e Mover = LI.Mover;
