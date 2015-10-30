@@ -298,107 +298,6 @@ removeNonAlias (list<PTCallType> &List, const AliasAnalysis::Location &Lock)
     }
 }
 
-/**
- * Thread / instruction reachability processor
- *
- * Complexity: P X N
- */
-struct Collect : public LiptonPass::Processor {
-
-    static StringRef                Action;
-
-    // See Gabow's SCC algorithm
-    int                                         scc = 0;
-    vector<BasicBlock *>                        S;
-    vector<int>                                 B;
-    DenseMap<BasicBlock *, int>                 I;
-
-    static inline bool New  (int i) { return i == 0; }
-    static inline bool SCC  (int i) { return i < 0; }
-    static inline bool Live (int i) { return i > 0; }
-    inline bool Stack(int i) { return i > 0 && S[i] == nullptr; }
-
-    Collect(LiptonPass *Pass) : LiptonPass::Processor(Pass) { }
-    ~Collect() { }
-
-    Instruction *
-    handleCall (CallInst *Call)
-    {
-        return Call;
-    }
-
-    bool
-    block ( BasicBlock &BB )
-    {
-        int         &IB = I[&BB];
-
-        if (Pass->opts.verbose) errs() << Action << ": " << BB << IB <<endll;
-        if (New(IB)) {
-            IB = S.size();
-            B.push_back (S.size());
-            S.push_back (nullptr);      // indicates on-stack (null)
-            return true;                // recurse
-        } else if (Live(IB)) {
-            if (Stack(IB)) {
-                Instruction *I = getFirstNonTerminal(BB.getFirstNonPHI());
-                ThreadF->Instructions[I].FVS = true;
-            }
-            while (B.back() > IB) { B.pop_back(); }
-        }
-        return false;
-    }
-
-    void
-    deblock ( BasicBlock &BB )
-    {
-        int         &IB = I[&BB];
-
-        S[IB] = &BB;    // reinsert basic block when backtracking (off stack)
-
-        scc--;
-        if (IB == B.back()) {
-            while (IB <= S.size()) {
-                BasicBlock *XX = S.back ();
-                assert (XX != nullptr);
-                I[XX] = scc;
-                for (Instruction &I : *XX) {
-                    ThreadF->Instructions[&I].Loops = true;
-                }
-                S.pop_back ();
-            }
-            B.pop_back ();
-        }
-    }
-
-    void
-    thread (Function *T)
-    {
-        assert (S.empty() && B.empty());
-        scc = 0;
-        I.clear ();
-
-        ThreadF = Pass->Threads[T];
-    }
-
-    Instruction *
-    process (Instruction *I)
-    {
-        if ( I->isTerminator() ||
-                dyn_cast_or_null<PHINode>(I) != nullptr ||
-                !I->mayReadOrWriteMemory() ||
-                isa<DbgInfoIntrinsic>(I) ||
-                ThreadF->Instructions[I].singleThreaded() ) {
-            return I;
-        }
-
-        ThreadF->Aliases->add (I);
-
-        AliasSet *AS = FindAliasSetForUnknownInst (ThreadF->Aliases, I);
-        Pass->AS2I[AS].push_back(I);
-        return I;
-    }
-};
-
 bool
 PThreadType::operator<=(PThreadType &O)
 {
@@ -753,6 +652,108 @@ private:
         } else {
             LI.PT = PT;
         }
+    }
+};
+
+
+/**
+ * Thread / instruction reachability processor
+ *
+ * Complexity: P X N
+ */
+struct Collect : public LiptonPass::Processor {
+
+    static StringRef                Action;
+
+    // See Gabow's SCC algorithm
+    int                                         scc = 0;
+    vector<BasicBlock *>                        S;
+    vector<int>                                 B;
+    DenseMap<BasicBlock *, int>                 I;
+
+    static inline bool New  (int i) { return i == 0; }
+    static inline bool SCC  (int i) { return i < 0; }
+    static inline bool Live (int i) { return i > 0; }
+    inline bool Stack(int i) { return i > 0 && S[i] == nullptr; }
+
+    Collect(LiptonPass *Pass) : LiptonPass::Processor(Pass) { }
+    ~Collect() { }
+
+    Instruction *
+    handleCall (CallInst *Call)
+    {
+        return Call;
+    }
+
+    bool
+    block ( BasicBlock &BB )
+    {
+        int         &IB = I[&BB];
+
+        if (Pass->opts.verbose) errs() << Action << ": " << BB << IB <<endll;
+        if (New(IB)) {
+            IB = S.size();
+            B.push_back (S.size());
+            S.push_back (nullptr);      // indicates on-stack (null)
+            return true;                // recurse
+        } else if (Live(IB)) {
+            if (Stack(IB)) {
+                Instruction *I = getFirstNonTerminal(BB.getFirstNonPHI());
+                ThreadF->Instructions[I].FVS = true;
+            }
+            while (B.back() > IB) { B.pop_back(); }
+        }
+        return false;
+    }
+
+    void
+    deblock ( BasicBlock &BB )
+    {
+        int         &IB = I[&BB];
+
+        S[IB] = &BB;    // reinsert basic block when backtracking (off stack)
+
+        scc--;
+        if (IB == B.back()) {
+            while (IB <= S.size()) {
+                BasicBlock *XX = S.back ();
+                assert (XX != nullptr);
+                I[XX] = scc;
+                for (Instruction &I : *XX) {
+                    ThreadF->Instructions[&I].Loops = true;
+                }
+                S.pop_back ();
+            }
+            B.pop_back ();
+        }
+    }
+
+    void
+    thread (Function *T)
+    {
+        assert (S.empty() && B.empty());
+        scc = 0;
+        I.clear ();
+
+        ThreadF = Pass->Threads[T];
+    }
+
+    Instruction *
+    process (Instruction *I)
+    {
+        if ( I->isTerminator() ||
+                dyn_cast_or_null<PHINode>(I) != nullptr ||
+                !I->mayReadOrWriteMemory() ||
+                isa<DbgInfoIntrinsic>(I) ||
+                ThreadF->Instructions[I].singleThreaded() ) {
+            return I;
+        }
+
+        ThreadF->Aliases->add (I);
+
+        AliasSet *AS = FindAliasSetForUnknownInst (ThreadF->Aliases, I);
+        Pass->AS2I[AS].push_back(I);
+        return I;
     }
 };
 
