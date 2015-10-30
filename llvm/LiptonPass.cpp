@@ -53,14 +53,25 @@ static Constant *FALSE;
 static Constant *PRECOMMIT = FALSE;
 static Constant *POSTCOMMIT = TRUE;
 
+
+static char PTHREAD_CREATE[100];
+static int  PTHREAD_CREATE_F_IDX = 1;
+static char PTHREAD_JOIN[100];
+
+static const char *PTHREAD1_CREATE   = "__thread_spawn";
+static const int   PTHREAD1_CREATE_F_IDX = 1;
+static const char *PTHREAD1_JOIN     = "__thread_join";
+
+static const char *PTHREAD2_CREATE   = "pthread_create";
+static const int   PTHREAD2_CREATE_F_IDX = 2;
+static const char *PTHREAD2_JOIN     = "pthread_join";
+
+
 static const char *ASSERT           = "assert";
 static const char *__YIELD          = "__yield";
 static const char *__YIELD_LOCAL    = "__yield_local";
 static const char *__ACT            = "__act";
 static const char *PTHREAD_YIELD    = "pthread_yield";
-static const char *PTHREAD_CREATE   = "__thread_spawn";
-static const int   PTHREAD_CREATE_F_IDX = 1;
-static const char *PTHREAD_JOIN     = "__thread_join";
 static const char *PTHREAD_LOCK     = "pthread_mutex_lock";
 static const char *PTHREAD_RLOCK    = "pthread_rwlock_rdlock";
 static const char *PTHREAD_WLOCK    = "pthread_rwlock_wrlock";
@@ -388,40 +399,38 @@ struct Collect : public LiptonPass::Processor {
 bool
 PThreadType::operator<=(PThreadType &O)
 {
-    for (PTCallType &Call : ReadLocks) {
-        if (checkAlias(O.ReadLocks, *Call.first) != 1) {
+    for (PTCallType &Call : *ReadLocks) {
+        if (checkAlias(*O.ReadLocks, *Call.first) != 1) {
             return false;
         }
     }
-    for (PTCallType &Call : WriteLocks) {
-        if (checkAlias(O.WriteLocks, *Call.first) != 1) {
+    for (PTCallType &Call : *WriteLocks) {
+        if (checkAlias(*O.WriteLocks, *Call.first) != 1) {
             return false;
         }
     }
     if (!O.CorrectThreads) return true;
     if (!CorrectThreads) return false;
-    for (PTCallType &Call : Threads) {
-        if (checkAlias(O.Threads, *Call.first) != 1) {
+    for (PTCallType &Call : *Threads) {
+        if (checkAlias(*O.Threads, *Call.first) != 1) {
             return false;
         }
     }
     return true;
 }
 
-
-
 void
 PThreadType::print (bool read, bool write, bool threads)
 {
     if (read) {
         errs () << "READ LOCKS: "<< endll;
-        for (PTCallType X : ReadLocks) {
+        for (PTCallType X : *ReadLocks) {
             errs () << *X.second << endll;
         }
     }
     if (write) {
         errs () << "WRITE LOCKS: "<< endll;
-        for (PTCallType X : WriteLocks) {
+        for (PTCallType X : *WriteLocks) {
             errs () << *X.second << endll;
         }
     }
@@ -430,7 +439,7 @@ PThreadType::print (bool read, bool write, bool threads)
             errs () << "THREADS Incorrect " << endll;
         } else {
             errs () << "THREADS seen: " << endll;
-            for (PTCallType X : Threads) {
+            for (PTCallType X : *Threads) {
                 errs () << *X.second << endll;
             }
         }
@@ -440,20 +449,21 @@ PThreadType::print (bool read, bool write, bool threads)
 bool
 PThreadType::locks ()
 {
-    return !ReadLocks.empty() || !WriteLocks.empty();
+    return !ReadLocks->empty() || !WriteLocks->empty();
 }
 
 int
 PThreadType::findAlias (pt_e kind, const AliasAnalysis::Location &Loc)
 {
     if (kind == ThreadStart) {
-        return checkAlias (Threads, Loc);
+        if (!CorrectThreads) return false;
+        return checkAlias (*Threads, Loc);
     }
     if (kind & ReadLock) {
-        return checkAlias (ReadLocks, Loc);
+        return checkAlias (*ReadLocks, Loc);
     }
     if (kind & TotalLock) {
-        return checkAlias (WriteLocks, Loc);
+        return checkAlias (*WriteLocks, Loc);
     }
     assert (false); return -1;
 }
@@ -467,10 +477,10 @@ PThreadType::missed (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Ca
         PT->CorrectThreads = false;
     } else {
         if (kind & ReadLock) {
-            PT->ReadLocks.resize (0);
+            PT->ReadLocks->resize (0);
         }
         if (kind & TotalLock) {
-            PT->WriteLocks.resize (0);
+            PT->WriteLocks->resize (0);
         }
     }
     return PT;
@@ -482,30 +492,55 @@ PThreadType::eraseAlias (pt_e kind, const AliasAnalysis::Location &Loc, CallInst
     errs () << "END: tracking "<< name(kind, false) <<": "<< *Call << endll;
     PThreadType *PT = new PThreadType(this);
     if (kind == ThreadStart) {
-        removeAlias (PT->Threads, &Loc);
+        removeAlias (*PT->Threads, &Loc);
     } else {
         int count = 0;
         if (kind & ReadLock) {
-            count += removeAlias (PT->ReadLocks, &Loc);
+            count += removeAlias (*PT->ReadLocks, &Loc);
         }
         if (kind & TotalLock) {
-            count += removeAlias (PT->WriteLocks, &Loc);
+            count += removeAlias (*PT->WriteLocks, &Loc);
         }
         assert (count == 1);
     }
     return PT;
 }
 
+PThreadType *
+PThreadType::resizeReadLocks (int size)
+{
+    PThreadType *O = new PThreadType(this);
+    O->ReadLocks->resize(0);
+    return O;
+}
+
+void
+PThreadType::eraseNonAlias (pt_e kind, PThreadType *O)
+{
+    if (kind == ThreadStart) {
+        for (PTCallType &LockJ : *O->Threads) { // intersection:
+            eraseNonAlias (ThreadStart, *LockJ.first, LockJ.second);
+        }
+    } else if (kind == ReadLock) {
+        for (PTCallType &LockJ : *O->ReadLocks) { // intersection:
+            eraseNonAlias (ReadLock, *LockJ.first, LockJ.second);
+        }
+    } else if (kind == TotalLock || kind == AnyLock) {
+        for (PTCallType &LockJ : *O->WriteLocks) { // intersection:
+            eraseNonAlias (TotalLock, *LockJ.first, LockJ.second);
+        }
+    }
+}
 
 void
 PThreadType::eraseNonAlias (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call)
 {
     if (kind == ThreadStart) {
-        removeNonAlias (Threads, Loc);
+        removeNonAlias (*Threads, Loc);
     } else if (kind == ReadLock) {
-        removeNonAlias (ReadLocks, Loc);
+        removeNonAlias (*ReadLocks, Loc);
     } else if (kind == TotalLock || kind == AnyLock) {
-        removeNonAlias (WriteLocks, Loc);
+        removeNonAlias (*WriteLocks, Loc);
     }
 }
 
@@ -518,11 +553,11 @@ PThreadType::add (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call)
     PThreadType *PT = new PThreadType(this);
     assert (kind != AnyLock);
     if (kind == ThreadStart) {
-        PT->Threads.push_back (make_pair(L, Call));
+        PT->Threads->push_back (make_pair(L, Call));
     } else if (kind & ReadLock) {
-        PT->ReadLocks.push_back (make_pair(L, Call));
+        PT->ReadLocks->push_back (make_pair(L, Call));
     } else if (kind & TotalLock) {
-        PT->WriteLocks.push_back (make_pair(L, Call));
+        PT->WriteLocks->push_back (make_pair(L, Call));
     } else {
         assert (false);
     }
@@ -625,17 +660,15 @@ struct LockSearch : public LiptonPass::Processor {
         Seen.clear();
         ThreadF = Pass->Threads[T];
 
-        PT = new PThreadType(); //TODO: leak?
-        if (!T->getName().equals("main")) { // Not single threaded from the start!
-            PT->CorrectThreads = false;
-        }
+        // Only main starts out single threaded
+        PT = new PThreadType(T->getName().equals("main")); //TODO: leak?
     }
 
     void
     addPThread (CallInst *Call, pt_e kind, bool add)
     {
         if (Pass->opts.nolock) return;
-        if (kind == ThreadStart && !PT->CorrectThreads) return; // nothing to do
+        if (kind == ThreadStart && !PT->isCorrectThreads()) return; // nothing to do
 
         AliasAnalysis::Location L;
 //        if (kind == ThreadStart && !add) { // PTHREAD_JOIN
@@ -666,8 +699,6 @@ struct LockSearch : public LiptonPass::Processor {
     Instruction *
     handleCall (CallInst *Call)
     {
-        Function *Callee = Call->getCalledFunction ();
-        assert (Call && Callee);
         doHandle (Call);
 
         if (Call->getCalledFunction()->getName().endswith(PTHREAD_YIELD)) {
@@ -689,13 +720,11 @@ struct LockSearch : public LiptonPass::Processor {
             addPThread (Call, ThreadStart, false);
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_MUTEX_INIT)) {
         } else if (Call->getCalledFunction()->getName().endswith(ATOMIC_BEGIN)) {
-            LLASSERT (PT->Atomic == false, "Already "<< ATOMIC_BEGIN <<"encountered before: "<< Call << endll);
-            PT = new PThreadType(PT); // optimize
-            PT->Atomic = true;
+            LLASSERT (!PT->isAtomic(), "Already "<< ATOMIC_BEGIN <<"encountered before: "<< Call << endll);
+            PT = PT->flipAtomic ();
         } else if (Call->getCalledFunction()->getName().endswith(ATOMIC_END)) {
-            LLASSERT (PT->Atomic == true, "No "<< ATOMIC_BEGIN <<"encountered before: "<< Call << endll);
-            PT = new PThreadType(PT); // optimize
-            PT->Atomic = false;
+            LLASSERT (PT->isAtomic(), "No "<< ATOMIC_BEGIN <<"encountered before: "<< Call << endll);
+            PT = PT->flipAtomic ();
         } else {
             return nullptr;
         }
@@ -715,10 +744,9 @@ private:
     doHandle (Instruction *I)
     {
         LLVMInstr &LI = ThreadF->Instructions[I];
-        LI.Atomic = PT->Atomic;
+        LI.Atomic = PT->isAtomic();
         if (I->mayWriteToMemory()) {
-            LI.PT = new PThreadType(PT);
-            LI.PT->ReadLocks.resize (0);
+            LI.PT = PT->resizeReadLocks (0);
         } else {
             LI.PT = PT;
         }
@@ -927,7 +955,7 @@ private:
             if (Area & Post) { // Post, Top
                 insertBlock (I, YieldBlock);
             }
-            if (LI.PT->Atomic) {
+            if (LI.PT->isAtomic()) {
                 if (Area == Bottom) Area = Pre;
             } else {
                 Area = Pre;
@@ -968,7 +996,6 @@ private:
 
             AliasSet *AS = FindAliasSetForUnknownInst (T2->Aliases, I);
             if (AS == nullptr)  continue;
-
 			for (Instruction *J : Pass->AS2I[AS]) {
 				if (isCommutingAtomic(I,J)) continue;
 				if (!I->mayWriteToMemory() && !J->mayWriteToMemory()) continue;
@@ -980,13 +1007,8 @@ private:
 				if (PT == nullptr) {
 					PT = new PThreadType (LI.PT); // copy
 				}
-
-				for (PTCallType &LockJ : LJ.PT->ReadLocks) { // intersection:
-					PT->eraseNonAlias (ReadLock, *LockJ.first, LockJ.second);
-				}
-				for (PTCallType &LockJ : LJ.PT->WriteLocks) { // intersection:
-					PT->eraseNonAlias (TotalLock, *LockJ.first, LockJ.second);
-				}
+				PT->eraseNonAlias (ReadLock, LJ.PT);
+				PT->eraseNonAlias (TotalLock, LJ.PT);
 			}
 
             if (conflict && (PT == nullptr || !PT->locks())) {
@@ -1072,8 +1094,6 @@ LiptonPass::walkGraph ( Instruction *I )
 {
     if (TerminatorInst *T = dyn_cast<TerminatorInst> (I)) {
         handle->process (I);
-
-        assert (I == I->getParent()->getTerminator());
         for (int i = 0, num = T->getNumSuccessors(); i < num; ++i) {
             BasicBlock *B = T->getSuccessor(i);
             walkGraph (*B);
@@ -1553,7 +1573,7 @@ LiptonPass::deduceInstances (Module &M)
 {
     Function *Main = M.getFunction ("main");
     ASSERT (Main, "No main function in module");
-    LLVMThread* TT = new LLVMThread (Main);
+    LLVMThread *TT = new LLVMThread (Main);
     Threads[Main] = TT;
     TT->Starts.push_back (nullptr);
     for (Function &F : M) {
@@ -1568,7 +1588,7 @@ LiptonPass::deduceInstances (Module &M)
                     LLASSERT (Callee, "Unexpected call by value! Undefined function? Handle: " << *Call << endll << *FT <<endll);
                 }
                 if (Callee->getName() == PTHREAD_CREATE) {
-                    Function *F = dyn_cast<Function> (Call->getOperand (PTHREAD_CREATE_F_IDX));
+                    Function *F = dyn_cast_or_null<Function> (Call->getOperand (PTHREAD_CREATE_F_IDX));
                     ASSERT (F, "Incorrect pthread_create argument?");
                     //Threads (threadF, callInstr); // add to threads (via functor)
                     if (Threads.find(F) == Threads.end()) {
@@ -1587,12 +1607,34 @@ LiptonPass::deduceInstances (Module &M)
 bool
 LiptonPass::runOnModule (Module &M)
 {
+    if (opts.debug) {
+        strncpy (PTHREAD_CREATE, PTHREAD2_CREATE, 100);
+        strncpy (PTHREAD_JOIN, PTHREAD2_JOIN, 100);
+        PTHREAD_CREATE_F_IDX= PTHREAD2_CREATE_F_IDX;
+    } else {
+        strncpy (PTHREAD_CREATE, PTHREAD1_CREATE, 100);
+        strncpy (PTHREAD_JOIN, PTHREAD1_JOIN, 100);
+        PTHREAD_CREATE_F_IDX = PTHREAD1_CREATE_F_IDX;
+    }
+
     AA = &getAnalysis<AliasAnalysis> ();
 
     deduceInstances (M);
 
     // Statically find instructions for which invariantly a lock is held
     walkGraph<LockSearch> (M);
+
+    int z = 0;
+    for (Function &F : M) {
+        if (Threads.find(&F) == Threads.end()) continue;
+        LLVMThread *T = Threads[&F];
+        for (BasicBlock &B : F) {
+            for (Instruction &I : B) {
+                z += (int) T->Instructions[&I].Area;
+                //errs () << T->Instructions[&I].PT <<"   "<< I << endll;
+            }
+        }
+    }
 
     // Collect thread reachability info +
     // Collect movability info

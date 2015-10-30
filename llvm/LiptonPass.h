@@ -8,11 +8,10 @@
 #ifndef LIPTONBIN_LLVM_LIPTONPASS_H_
 #define LIPTONBIN_LLVM_LIPTONPASS_H_
 
+#include <iterator>
 #include <list>
 #include <string>
 #include <vector>
-
-#include "llvm/ReachPass.h"
 
 #include <llvm/Pass.h>
 #include <llvm/IR/Instruction.h>
@@ -21,9 +20,11 @@
 #include <llvm/Analysis/AliasSetTracker.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
+#include <llvm/Support/raw_os_ostream.h>
 
 
 using namespace llvm;
+using namespace std;
 
 namespace VVT {
 
@@ -74,22 +75,42 @@ struct Options {
 typedef pair<const AliasAnalysis::Location *, CallInst *> PTCallType;
 
 // Copy-on-write (COW)
-struct PThreadType {
-    PThreadType () {}
-    PThreadType (PThreadType *O) {
-        ReadLocks = O->ReadLocks;
-        WriteLocks = O->WriteLocks;
-        Threads = O->Threads;
-        CorrectThreads = O->CorrectThreads;
-    }
+class PThreadType {
+private:
 
-    list<PTCallType>            WriteLocks;
-    list<PTCallType>            ReadLocks;
-    list<PTCallType>            Threads;
+    list<PTCallType>           *WriteLocks = nullptr;
+    list<PTCallType>           *ReadLocks = nullptr;
+    list<PTCallType>           *Threads = nullptr;
     bool                        CorrectThreads = true;
     bool                        Atomic = false;
 
+    PThreadType (PThreadType *O, bool copy) {
+        ReadLocks   = O->ReadLocks;
+        WriteLocks  = O->WriteLocks;
+        Threads     = O->Threads;
+        CorrectThreads = O->CorrectThreads;
+        Atomic = O->Atomic;
+        assert (copy);
+    }
+
 public:
+    PThreadType (bool threads) {
+        WriteLocks = new list<PTCallType> ();
+        ReadLocks = new list<PTCallType> ();
+        Threads = new list<PTCallType> ();
+        CorrectThreads = threads;
+    }
+
+    PThreadType (PThreadType *O) {
+        ReadLocks = new list<PTCallType> (*O->ReadLocks);
+        WriteLocks = new list<PTCallType> (*O->WriteLocks);
+        if (O->CorrectThreads)
+            Threads = new list<PTCallType> (*O->Threads);
+        CorrectThreads = O->CorrectThreads;
+        Atomic = O->Atomic;
+    }
+
+
     bool operator<=(PThreadType &O);
     void print (bool read, bool write, bool threads);
     bool locks  ();
@@ -101,8 +122,20 @@ public:
 
     // exception to COW (used to reduce lock set candidates):
     void eraseNonAlias  (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call);
+    void eraseNonAlias (pt_e kind, PThreadType *O);
 
     int  findAlias   (pt_e kind, const AliasAnalysis::Location &Loc);
+
+    PThreadType *resizeReadLocks (int size);
+    PThreadType *flipAtomic() {
+        PThreadType *O = new PThreadType (this, true);
+        O->Atomic = !Atomic;
+        return O;
+    }
+
+    bool singleThreaded() { return CorrectThreads && Threads->empty(); }
+    bool isAtomic() { return Atomic; }
+    bool isCorrectThreads() { return CorrectThreads; }
 };
 
 struct LLVMInstr {
@@ -116,13 +149,22 @@ struct LLVMInstr {
     bool
     singleThreaded ()
     {
-        return PT->CorrectThreads && PT->Threads.empty();
+        assert (PT != nullptr);
+        return PT->singleThreaded();
     }
 };
+
+static Function *
+getFF () {
+    assert(false);
+    return nullptr;
+}
 
 struct LLVMThread {
     Function                                   &F;
     vector<Instruction *>                       Starts;
+
+    LLVMThread() : F(*getFF()) { assert(false);  }
 
     LLVMThread(Function *F)
     :
@@ -134,7 +176,7 @@ struct LLVMThread {
     int NrRuns ();
 
     DenseMap<Instruction *, pair<block_e, int>> BlockStarts;
-    AliasSetTracker                            *Aliases;
+    AliasSetTracker                            *Aliases = nullptr;
     AllocaInst                                 *PhaseVar = nullptr;
     DenseMap<Instruction *, LLVMInstr>          Instructions;
 
