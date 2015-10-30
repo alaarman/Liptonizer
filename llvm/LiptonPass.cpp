@@ -181,6 +181,15 @@ LiptonPass::Processor::isBlockStart (Instruction *I)
 	return NoBlock;
 }
 
+LLVMInstr &
+LLVMThread::getInstruction (Instruction *I)
+{
+    if (Instructions.find(I) == Instructions.end()) {
+        Instructions.insert(make_pair(I, new LLVMInstr()));
+    }
+    return *(*Instructions.find(I)).second;
+}
+
 int
 LLVMThread::NrRuns ()
 {
@@ -188,7 +197,7 @@ LLVMThread::NrRuns ()
     for (Instruction *I : Starts) {
         if (I == nullptr)
             break; // MAIN
-        if (Instructions[I].Loops) {
+            if (getInstruction(I).Loops) {
             Runs = -1; // potentially infinite
             errs () << "THREAD: " << F.getName ()
                     << " (Potentially infinite)" << endll << *I << endll;
@@ -499,18 +508,27 @@ struct LockSearch : public LiptonPass::Processor {
         PThreadType        *PT = nullptr;
     };
 
-    DenseMap<BasicBlock *, LockVisited>     Seen;
+    DenseMap<BasicBlock *, LockVisited *>   Seen;
     vector<BasicBlock *>                    Stack;
 
     // Will always point to the one on the top of the stack or an empty struct
     // Access policy: copy-on-write
     PThreadType                    *PT = nullptr;
 
+    LockSearch::LockVisited &
+    getBlock (BasicBlock &B)
+    {
+        if (Seen.find(&B) == Seen.end()) {
+            Seen.insert(make_pair(&B, new LockVisited()));
+        }
+        return *(*Seen.find(&B)).second;
+    }
+
     // block and deblock implement revisiting
     bool
     block ( BasicBlock &B )
     {
-        LockVisited &V = Seen[&B];
+        LockVisited &V = getBlock (B);
 
         if (V.State != Unvisited && *V.PT <= *PT) {
             return false;
@@ -527,7 +545,7 @@ struct LockSearch : public LiptonPass::Processor {
         if (V.State == Stacked) { // rewind stack
             while (true) {
                 BasicBlock *Old = Stack.back();
-                Seen[Old].State = Visited;
+                getBlock(*Old).State = Visited;
                 Stack.pop_back ();
                 errs () << "Removing: " << *Old<< endll;
                 if (Old == &B) break;
@@ -545,7 +563,7 @@ struct LockSearch : public LiptonPass::Processor {
     {
         if (Pass->opts.verbose) PT->print (true, true, false);
 
-        LockVisited &V = Seen[&B];
+        LockVisited &V = getBlock (B);
         if (V.State != Stacked) return; // already popped in stack rewind
 
         PT = V.PT;
@@ -645,7 +663,7 @@ private:
     void
     doHandle (Instruction *I)
     {
-        LLVMInstr &LI = ThreadF->Instructions[I];
+        LLVMInstr &LI = ThreadF->getInstruction(I);
         LI.Atomic = PT->isAtomic();
         if (I->mayWriteToMemory()) {
             LI.PT = PT->resizeReadLocks (0);
@@ -699,7 +717,7 @@ struct Collect : public LiptonPass::Processor {
         } else if (Live(IB)) {
             if (Stack(IB)) {
                 Instruction *I = getFirstNonTerminal(BB.getFirstNonPHI());
-                ThreadF->Instructions[I].FVS = true;
+                ThreadF->getInstruction(I).FVS = true;
             }
             while (B.back() > IB) { B.pop_back(); }
         }
@@ -720,7 +738,7 @@ struct Collect : public LiptonPass::Processor {
                 assert (XX != nullptr);
                 I[XX] = scc;
                 for (Instruction &I : *XX) {
-                    ThreadF->Instructions[&I].Loops = true;
+                    ThreadF->getInstruction(&I).Loops = true;
                 }
                 S.pop_back ();
             }
@@ -745,7 +763,7 @@ struct Collect : public LiptonPass::Processor {
                 dyn_cast_or_null<PHINode>(I) != nullptr ||
                 !I->mayReadOrWriteMemory() ||
                 isa<DbgInfoIntrinsic>(I) ||
-                ThreadF->Instructions[I].singleThreaded() ) {
+                ThreadF->getInstruction(I).singleThreaded() ) {
             return I;
         }
 
@@ -872,7 +890,7 @@ struct Liptonize : public LiptonPass::Processor {
     {
         assert (Call && Call->getCalledFunction());
 
-        LLVMInstr &LI = ThreadF->Instructions[Call];
+        LLVMInstr &LI = ThreadF->getInstruction(Call);
 
         mover_e Mover;
 
@@ -897,7 +915,7 @@ struct Liptonize : public LiptonPass::Processor {
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_JOIN)) {
             Mover = RightMover;
         } else if (Call->getCalledFunction()->getName().endswith(ATOMIC_BEGIN)) {
-            assert (!ThreadF->Instructions[Call].Atomic);
+            assert (!ThreadF->getInstruction(Call).Atomic);
             Mover = RightMover; // force (dynamic) yield (for Post/Top)
         } else if (Call->getCalledFunction()->getName().endswith(ATOMIC_END)) {
             return Call;
@@ -920,7 +938,7 @@ struct Liptonize : public LiptonPass::Processor {
     Instruction *
     process (Instruction *I)
     {
-        LLVMInstr &LI = ThreadF->Instructions[I];
+        LLVMInstr &LI = ThreadF->getInstruction(I);
 
         mover_e Mover = LI.Mover;
         if (Mover == -1) {
@@ -1005,7 +1023,7 @@ private:
 				if (isCommutingAtomic(I,J)) continue;
 				if (!I->mayWriteToMemory() && !J->mayWriteToMemory()) continue;
 
-				LLVMInstr &LJ = T2->Instructions[J];
+				LLVMInstr &LJ = T2->getInstruction(J);
 
 				conflict = true;
 	            if (!LI.PT->locks() || !LJ.PT->locks()) break;
@@ -1050,7 +1068,7 @@ private:
                   dyn_cast_or_null<TerminatorInst>(I)->getSuccessor (0)->getFirstNonPHI () == I,
                   "insertBlock "<< name(yieldType) <<". Instruction:" << *I);
 
-        if (yieldType != StartBlock && ThreadF->Instructions[I].singleThreaded()) {
+        if (yieldType != StartBlock && ThreadF->getInstruction(I).singleThreaded()) {
             return -1;
         }
 
@@ -1327,7 +1345,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
     assert(POSTCOMMIT == TRUE);
 
     errs () << "PROCESSSSSSSSSSSSSSSSSSSSS: "<< *I << endll;
-    LLVMInstr &LI = T->Instructions[I];
+    LLVMInstr &LI = T->getInstruction(I);
     area_e Area = LI.Area;
     mover_e Mover = LI.Mover;
     AllocaInst *Phase = T->PhaseVar;
@@ -1500,7 +1518,7 @@ LiptonPass::initialInstrument (Module &M)
 void
 LiptonPass::staticYield (LLVMThread *T, Instruction *I, block_e type, int block)
 {
-    LLVMInstr &LI = T->Instructions[I];
+    LLVMInstr &LI = T->getInstruction(I);
     if (type == StartBlock) {
         return;
     } else if (type == LoopBlock) {
@@ -1550,7 +1568,6 @@ LiptonPass::finalInstrument (Module &M)
         }
     } else {
         // collect thread initial instructions (before instrumenting threads)
-        DenseMap<Function *, Instruction *> Starts;
         for (pair<Function *, LLVMThread *> X : Threads) {
             Function *T = X.first;
             Instruction *Start = T->getEntryBlock().getFirstNonPHI();

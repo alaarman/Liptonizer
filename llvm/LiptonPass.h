@@ -178,9 +178,11 @@ struct LLVMThread {
     DenseMap<Instruction *, pair<block_e, int>> BlockStarts;
     AliasSetTracker                            *Aliases = nullptr;
     AllocaInst                                 *PhaseVar = nullptr;
-    DenseMap<Instruction *, LLVMInstr>          Instructions;
+    DenseMap<Instruction *, LLVMInstr *>          Instructions;
 
     bool isSingleton ();
+
+    LLVMInstr &getInstruction (Instruction* I);
 };
 
 class LiptonPass : public ModulePass {
