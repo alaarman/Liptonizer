@@ -145,12 +145,13 @@ struct LLVMInstr {
     bool            Loops   = false;
     bool            FVS     = false; // member of feedback vertex set?
     PThreadType    *PT      = nullptr;
+    bool            isPTCreate= true;
 
     bool
     singleThreaded ()
     {
         assert (PT != nullptr);
-        return PT->singleThreaded();
+        return !isPTCreate && PT->singleThreaded();
     }
 };
 

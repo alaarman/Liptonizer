@@ -636,6 +636,7 @@ struct LockSearch : public LiptonPass::Processor {
             addPThread (Call, TotalLock, false);
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_CREATE)) {
             addPThread (Call, ThreadStart, true);
+            ThreadF->getInstruction(Call).isPTCreate = true;
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_JOIN)) {
             addPThread (Call, ThreadStart, false);
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_MUTEX_INIT)) {
@@ -893,11 +894,10 @@ struct Liptonize : public LiptonPass::Processor {
         LLVMInstr &LI = ThreadF->getInstruction(Call);
 
         mover_e Mover;
-
-        if (Call->getCalledFunction()->getName().endswith(PTHREAD_CREATE)) {
-            Mover = LeftMover;
-        } else if (LI.singleThreaded()) {
+        if (LI.singleThreaded()) {
             Mover = BothMover;
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_CREATE)) {
+            Mover = LeftMover;
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_YIELD)) {
             errs () << "WARNING: pre-existing Yield call: "<< *Call <<"\n";
             Area = Bottom;
