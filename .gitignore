@@ -3,6 +3,8 @@ CMakeFiles
 CMakeCache.txt
 cmake_install.cmake
 *.so
+*.ll
+*.bc
 /Debug
 LiptonPass
 example/ndfs
