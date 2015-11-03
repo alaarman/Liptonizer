@@ -884,6 +884,7 @@ struct Liptonize : public LiptonPass::Processor {
         assert (b == 0); // start block
 
         Seen.clear();
+        (void) b;
     }
 
     Instruction *
@@ -1170,7 +1171,6 @@ LiptonPass::walkGraph (Module &M)
     ProcessorT processor(this);
     handle = &processor;
 
-    errs () <<" -------------------- "<< typeid(ProcessorT).name() <<" -------------------- "<< endll;
     for (pair<Function *, LLVMThread *> &X : Threads) { // TODO: extended while iterting
         Function *T = X.first;
 
@@ -1608,6 +1608,7 @@ LiptonPass::deduceInstances (Module &M)
                     Type *Type = Call->getCalledValue()->getType();
                     FunctionType *FT = cast<FunctionType>(cast<PointerType>(Type)->getElementType());
                     LLASSERT (Callee, "Unexpected call by value! Undefined function? Handle: " << *Call << endll << *FT <<endll);
+                    (void) FT;
                 }
                 if (Callee->getName() == PTHREAD_CREATE) {
                     Function *F = dyn_cast_or_null<Function> (Call->getOperand (PTHREAD_CREATE_F_IDX));
@@ -1643,6 +1644,8 @@ LiptonPass::runOnModule (Module &M)
 
     deduceInstances (M);
 
+    errs () <<" -------------------- "<< "LockSearching" <<" -------------------- "<< endll;
+
     // Statically find instructions for which invariantly a lock is held
     walkGraph<LockSearch> (M);
 
@@ -1658,10 +1661,12 @@ LiptonPass::runOnModule (Module &M)
 //        }
 //    }
 
+    errs () <<" -------------------- "<< "Collecting" <<" -------------------- "<< endll;
     // Collect thread reachability info +
     // Collect movability info
     walkGraph<Collect> (M);
 
+    errs () <<" -------------------- "<< "Liptonizing" <<" -------------------- "<< endll;
     // Identify and number blocks statically
     // (assuming all dynamic non-movers are static non-movers)
     walkGraph<Liptonize> (M);
