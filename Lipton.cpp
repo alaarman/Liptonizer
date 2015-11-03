@@ -76,18 +76,6 @@ main( int argc, const char *argv[] )
 {
     Module *M;
     LLVMContext &context = getGlobalContext();
-    ErrorOr<unique_ptr<MemoryBuffer>> buf_ptr_ptr = MemoryBuffer::getSTDIN();
-    if (!buf_ptr_ptr) {
-      cerr << "Failed reading LLVM code. Error: "<<buf_ptr_ptr.getError() << endl;
-      return 1;
-    }
-    unique_ptr<MemoryBuffer> &bufptr = *buf_ptr_ptr;
-    ErrorOr<Module*> mod = parseBitcodeFile(bufptr.get(), context);
-    if (!mod) {
-      cerr << argv[0] << mod.getError();
-      return 1;
-    }
-    M = mod.get();
 
     Options o;
     for (int i = 1; i < argc; i++) {
@@ -110,6 +98,19 @@ main( int argc, const char *argv[] )
     if ( o.nodyn && o.staticAll ) {
         usage (argv[0]);
     }
+
+    ErrorOr<unique_ptr<MemoryBuffer>> buf_ptr_ptr = MemoryBuffer::getSTDIN();
+    if (!buf_ptr_ptr) {
+      cerr << "Failed reading LLVM code. Error: "<<buf_ptr_ptr.getError() << endl;
+      return 1;
+    }
+    unique_ptr<MemoryBuffer> &bufptr = *buf_ptr_ptr;
+    ErrorOr<Module*> mod = parseBitcodeFile(bufptr.get(), context);
+    if (!mod) {
+      cerr << argv[0] << mod.getError();
+      return 1;
+    }
+    M = mod.get();
 
     Function *main = M->getFunction("main");
     ASSERT (main, "No 'main' function. Library?\n");
