@@ -49,9 +49,9 @@ void *
 process1 (void *arg)
 {
   //pthread_join(ht_init,0);
-  int val = 1;//(int )arg;
+  int val = 8;//(int )arg;
   int found = find_or_insert (val);
-  assert (found);// != FULL);
+  assert (!found);// != FULL);
 #ifdef DEBUG
   printf ("%d = %s\n", val, found ? "found" : "inserted");
 #endif
@@ -123,6 +123,35 @@ process6 (void *arg)
   return NULL;//(void *) (long) found; // pthread_exit( (void *) found )
 }
 
+
+void *
+process7 (void *arg)
+{
+  //pthread_join(ht_init,0);
+  int val = 41;//(int )arg;
+  int found = find_or_insert (val);
+  assert (found);// != FULL);
+#ifdef DEBUG
+  printf ("%d = %s\n", val, found ? "found" : "inserted");
+#endif
+  return NULL;//(void *) (long) found; // pthread_exit( (void *) found )
+}
+
+
+void *
+process8 (void *arg)
+{
+  //pthread_join(ht_init,0);
+  int val = 52;//(int )arg;
+  int found = find_or_insert (val);
+  assert (found);// != FULL);
+#ifdef DEBUG
+  printf ("%d = %s\n", val, found ? "found" : "inserted");
+#endif
+  return NULL;//(void *) (long) found; // pthread_exit( (void *) found )
+}
+
+
 #define T 2				// threads
 int value[T] = {  1, 59, };//9, };// 52, 41  };
 int
@@ -145,6 +174,8 @@ main ()
     pthread_t t4;
     pthread_t t5;
     pthread_t t6;
+    pthread_t t7;
+    pthread_t t8;
 	//for (int i = 0; i < T; i++)
 		pthread_create (&t1, NULL, process1, NULL);//(void *) &value[i]);
 		pthread_create (&t2, NULL, process2, NULL);//(void *) &value[i]);
@@ -152,6 +183,8 @@ main ()
         pthread_create (&t4, NULL, process4, NULL);//(void *) &value[i]);
         pthread_create (&t5, NULL, process5, NULL);//(void *) &value[i]);
         pthread_create (&t6, NULL, process6, NULL);//(void *) &value[i]);
+        pthread_create (&t7, NULL, process7, NULL);//(void *) &value[i]);
+        pthread_create (&t8, NULL, process8, NULL);//(void *) &value[i]);
 
 	int found_total = 0;
 	//long res;
@@ -166,7 +199,9 @@ main ()
         found_total += 1;//res;
         pthread_join (t5, NULL);// (void **)&res);
         found_total += 1;//res;
-        pthread_join (t6, NULL);// (void **)&res);
+        pthread_join (t7, NULL);// (void **)&res);
+        found_total += 1;//res;
+        pthread_join (t8, NULL);// (void **)&res);
         found_total += 1;//res;
 //	}
 	//assert (found_total == 4); // T - (unique values in value array)
