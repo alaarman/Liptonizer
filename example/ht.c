@@ -185,25 +185,25 @@ main ()
         //pthread_create (&t6, NULL, process6, NULL);//(void *) &value[i]);
         //pthread_create (&t7, NULL, process7, NULL);//(void *) &value[i]);
         //pthread_create (&t8, NULL, process8, NULL);//(void *) &value[i]);
-
-	int found_total = 0;
-	//long res;
-//	for (int i = 0; i < T; i++) {
-		pthread_join (t1, NULL);// (void **)&res);
-		found_total += 1;//res;
-		pthread_join (t2, NULL);// (void **)&res);
-		found_total += 1;//res;
-        pthread_join (t3, NULL);// (void **)&res);
-        found_total += 1;//res;
-        pthread_join (t4, NULL);// (void **)&res);
-        found_total += 1;//res;
-        //pthread_join (t5, NULL);// (void **)&res);
-        //found_total += 1;//res;
-        //pthread_join (t7, NULL);// (void **)&res);
-        //found_total += 1;//res;
-        //pthread_join (t8, NULL);// (void **)&res);
-        //found_total += 1;//res;
-//	}
-	//assert (found_total == 4); // T - (unique values in value array)
+//
+//	int found_total = 0;
+//	//long res;
+////	for (int i = 0; i < T; i++) {
+//		pthread_join (t1, NULL);// (void **)&res);
+//		found_total += 1;//res;
+//		pthread_join (t2, NULL);// (void **)&res);
+//		found_total += 1;//res;
+//        pthread_join (t3, NULL);// (void **)&res);
+//        found_total += 1;//res;
+//        pthread_join (t4, NULL);// (void **)&res);
+//        found_total += 1;//res;
+//        //pthread_join (t5, NULL);// (void **)&res);
+//        //found_total += 1;//res;
+//        //pthread_join (t7, NULL);// (void **)&res);
+//        //found_total += 1;//res;
+//        //pthread_join (t8, NULL);// (void **)&res);
+//        //found_total += 1;//res;
+////	}
+//	//assert (found_total == 4); // T - (unique values in value array)
 	return 0;
 }
