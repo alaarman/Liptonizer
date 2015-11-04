@@ -14,7 +14,7 @@ static const int PROBE_MAX = 5;
 //static int table[N] = { 1, 9, 7, 0, 41, 55, 58, 52, 0, 0 };
 
 //hash(x) := x % 10
-static int table[N] = { 59, 1, 52, 41, 0, 55, 0, 7, 0, 9 };
+static int table[N] = { 59, 1, 50, 20, 0, 55, 65, 7, 0, 9 };
 
 
 //int table[N] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -49,7 +49,7 @@ void *
 process1 (void *arg)
 {
   //pthread_join(ht_init,0);
-  int val = 8;//(int )arg;
+  int val = 30;//(int )arg;
   int found = find_or_insert (val);
   assert (!found);// != FULL);
 #ifdef DEBUG
@@ -75,7 +75,7 @@ void *
 process3 (void *arg)
 {
   //pthread_join(ht_init,0);
-  int val = 9;//(int )arg;
+  int val = 65;//(int )arg;
   int found = find_or_insert (val);
   assert (found);// != FULL);
 #ifdef DEBUG
@@ -88,7 +88,7 @@ void *
 process4 (void *arg)
 {
   //pthread_join(ht_init,0);
-  int val = 41;//(int )arg;
+  int val = 20;//(int )arg;
   int found = find_or_insert (val);
   assert (found);// != FULL);
 #ifdef DEBUG
@@ -101,7 +101,7 @@ void *
 process5 (void *arg)
 {
   //pthread_join(ht_init,0);
-  int val = 7;//(int )arg;
+  int val = 50;//(int )arg;
   int found = find_or_insert (val);
   assert (found);// != FULL);
 #ifdef DEBUG
@@ -181,10 +181,10 @@ main ()
 		pthread_create (&t2, NULL, process2, NULL);//(void *) &value[i]);
         pthread_create (&t3, NULL, process3, NULL);//(void *) &value[i]);
         pthread_create (&t4, NULL, process4, NULL);//(void *) &value[i]);
-        pthread_create (&t5, NULL, process5, NULL);//(void *) &value[i]);
-        pthread_create (&t6, NULL, process6, NULL);//(void *) &value[i]);
-        pthread_create (&t7, NULL, process7, NULL);//(void *) &value[i]);
-        pthread_create (&t8, NULL, process8, NULL);//(void *) &value[i]);
+        //pthread_create (&t5, NULL, process5, NULL);//(void *) &value[i]);
+        //pthread_create (&t6, NULL, process6, NULL);//(void *) &value[i]);
+        //pthread_create (&t7, NULL, process7, NULL);//(void *) &value[i]);
+        //pthread_create (&t8, NULL, process8, NULL);//(void *) &value[i]);
 
 	int found_total = 0;
 	//long res;
@@ -197,12 +197,12 @@ main ()
         found_total += 1;//res;
         pthread_join (t4, NULL);// (void **)&res);
         found_total += 1;//res;
-        pthread_join (t5, NULL);// (void **)&res);
-        found_total += 1;//res;
-        pthread_join (t7, NULL);// (void **)&res);
-        found_total += 1;//res;
-        pthread_join (t8, NULL);// (void **)&res);
-        found_total += 1;//res;
+        //pthread_join (t5, NULL);// (void **)&res);
+        //found_total += 1;//res;
+        //pthread_join (t7, NULL);// (void **)&res);
+        //found_total += 1;//res;
+        //pthread_join (t8, NULL);// (void **)&res);
+        //found_total += 1;//res;
 //	}
 	//assert (found_total == 4); // T - (unique values in value array)
 	return 0;
