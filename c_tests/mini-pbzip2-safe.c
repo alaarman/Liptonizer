@@ -15,31 +15,14 @@ static size_t OutBufferPosToWrite;
 static outBuff *OutputBuffer;
 int OutputBuffer_length; // instrumented variable
 static queue *fifo;
-static pthread_mutex_t *OutMutex = NULL;
-//static pthread_cond_t *notTooMuchNumBuffered;
+static pthread_mutex_t OutMutex;
+static pthread_cond_t *notTooMuchNumBuffered;
 
 void outputBufferAdd(outBuff *element);
 void queue_add(queue *this_queue, ElementTypePtr element);
 int queue_remove(queue *this_queue, ElementTypePtr *element);
 
-void
-cond_wait (int *cond, pthread_mutex_t* mut)
-{
-    //pthread_mutex_lock(fifo->mut);
-    //while (fifo->full) { pthread_cond_wait(fifo->notFull, fifo->mut); }
-    while (1) {
-        if (!*cond) {
-            if (pthread_mutex_trylock (mut)) {
-                if (!*cond) {
-                    break;
-                }
-                pthread_mutex_trylock (mut);
-            }
-        }
-    }
-}
-
-void *fileWriter()
+void *fileWriter(void *__)
 {
   int currBlock = 0;
   size_t outBufferPos = 0;
@@ -50,18 +33,18 @@ void *fileWriter()
 	  // We're done
 	  break;
 	}
-      pthread_mutex_lock(OutMutex);
+      pthread_mutex_lock(&OutMutex);
       // 1st array bound check
       assert(0<=outBufferPos && outBufferPos<OutputBuffer_length);
       if ((OutputBuffer[outBufferPos].buf == INVALID))
 	{
-	  pthread_mutex_unlock(OutMutex);
+	  pthread_mutex_unlock(&OutMutex);
 	  //	  usleep(50000); // without usleep, pccw is faster
 	  continue;
 	}
       else
 	{
-	  pthread_mutex_unlock(OutMutex);
+	  pthread_mutex_unlock(&OutMutex);
 	}
       // 2nd array bound check
       assert(0<=outBufferPos && outBufferPos<OutputBuffer_length);
@@ -73,11 +56,11 @@ void *fileWriter()
 	  outBufferPos = 0;
 	}
       ++currBlock;
-      pthread_mutex_lock(OutMutex);
+      pthread_mutex_lock(&OutMutex);
       ++NextBlockToWrite;
       OutBufferPosToWrite = outBufferPos;
-      //pthread_cond_broadcast(notTooMuchNumBuffered);
-      pthread_mutex_unlock(OutMutex);
+      pthread_cond_broadcast(notTooMuchNumBuffered);
+      pthread_mutex_unlock(&OutMutex);
     } // while
   return (NULL);
 }
@@ -89,28 +72,30 @@ int producer()
   while (1)
     {
       FileData = (char *)VALID;
-      //pthread_mutex_lock(fifo->mut);
-      //while (fifo->full) { pthread_cond_wait(fifo->notFull, fifo->mut); }
-      cond_wait (&fifo->full, &fifo->mut);
-
+      pthread_mutex_lock(fifo->mut);
+      while (fifo->full)
+	{
+	  pthread_cond_wait(fifo->notFull, fifo->mut);
+	}
       outBuff *queueElement = (outBuff *) malloc(sizeof(outBuff));
       queueElement->buf = FileData; queueElement->blockNumber = NumBlocks;
       printf("PR: I produced block number %d.\n", queueElement->blockNumber);
       queue_add(fifo, queueElement);
-      //pthread_cond_signal(&fifo->notEmpty);
+      pthread_cond_signal(fifo->notEmpty);
       ++NumBlocks;
       pthread_mutex_unlock(fifo->mut);
       if (NumBlocks == MAX) { break; }
     } // while
-  //pthread_cond_broadcast(&fifo->notEmpty); // just in case
+  pthread_cond_broadcast(fifo->notEmpty); // just in case
   return 0;
 }
 
-void *consumer()
+void *consumer(void *__)
 {
   outBuff *fileData;
   for (;;)
     {
+      assert (fifo->mut != NULL);
       pthread_mutex_lock(fifo->mut);
       for (;;)
 	{
@@ -118,7 +103,7 @@ void *consumer()
 	    {
 	      break;
 	    }
-	    cond_wait(fifo->notEmpty, fifo->mut);
+	  pthread_cond_wait(fifo->notEmpty, fifo->mut);
 	}
       //      printf("CO: I read block number %d.\n", fileData->blockNumber);
       pthread_cond_signal(fifo->notFull);
@@ -131,41 +116,39 @@ void *consumer()
     } // for
 }
 
-static queue nonAlloced;
-
 queue *queueInit(int queueSize)
 {
-  queue *q = &nonalloced;
-  //q = (queue *) malloc(sizeof(queue));
-  //q->qData = (outBuff **) malloc(sizeof(outBuff *)*queueSize);
-  q->size = DSIZE;
+  queue *q;
+  q = (queue *) malloc(sizeof(queue));
+  q->qData = (outBuff **) malloc(sizeof(outBuff *)*queueSize);
+  q->size = queueSize;
   q->empty = 1;
   q->full = 0;
   q->head = 0;
   q->tail = 0;
-  //q->mut = (pthread_mutex_t *) malloc(sizeof(pthread_mutex_t));
-  pthread_mutex_init(&q->mut, NULL);
-  //q->notFull = (pthread_cond_t *) malloc(sizeof(pthread_cond_t));
-  //pthread_cond_init(q->notFull, NULL);
-  //q->notEmpty = (pthread_cond_t *) malloc(sizeof(pthread_cond_t));
-  //pthread_cond_init(q->notEmpty, NULL);
-  //notTooMuchNumBuffered = (pthread_cond_t *) malloc(sizeof(pthread_cond_t));
-  //pthread_cond_init(notTooMuchNumBuffered, NULL);
+  q->mut = (pthread_mutex_t *) malloc(sizeof(pthread_mutex_t));
+  pthread_mutex_init(q->mut, NULL);
+  q->notFull = (pthread_cond_t *) malloc(sizeof(pthread_cond_t));
+  pthread_cond_init(q->notFull, NULL);
+  q->notEmpty = (pthread_cond_t *) malloc(sizeof(pthread_cond_t));
+  pthread_cond_init(q->notEmpty, NULL);
+  notTooMuchNumBuffered = (pthread_cond_t *) malloc(sizeof(pthread_cond_t));
+  pthread_cond_init(notTooMuchNumBuffered, NULL);
   return (q);
 }
 
 void queueDelete (queue *q)
 {
-  //pthread_mutex_destroy(q->mut);
-  //free(q->mut);
-  //pthread_cond_destroy(q->notFull);
-  //free(q->notFull);
-  //pthread_cond_destroy(q->notEmpty);
-  //free(q->notEmpty);
-  //free(q->qData);
-  //free(q);
-  //pthread_cond_destroy(notTooMuchNumBuffered);
-  //free(notTooMuchNumBuffered);
+  pthread_mutex_destroy(q->mut);
+  free(q->mut);
+  pthread_cond_destroy(q->notFull);
+  free(q->notFull);
+  pthread_cond_destroy(q->notEmpty);
+  free(q->notEmpty);
+  free(q->qData);
+  free(q);
+  pthread_cond_destroy(notTooMuchNumBuffered);
+  free(notTooMuchNumBuffered);
   return;
 }
 
@@ -202,7 +185,7 @@ int queue_remove(queue *this_queue, ElementTypePtr *element)
 void outputBufferInit(size_t size)
 {
   int i;
-  pthread_mutex_lock(OutMutex);
+  pthread_mutex_lock(&OutMutex);
   NextBlockToWrite = 0;
   OutBufferPosToWrite = 0;
   OutputBuffer_length = size;
@@ -212,16 +195,16 @@ void outputBufferInit(size_t size)
     assert(0 <= i && i<size);
     OutputBuffer[i].buf = INVALID;
   }
-  pthread_mutex_unlock(OutMutex);
+  pthread_mutex_unlock(&OutMutex);
 }
 
 void outputBufferAdd(outBuff *element)
 {
-  pthread_mutex_lock(OutMutex);
+  pthread_mutex_lock(&OutMutex);
   int dist = element->blockNumber - NumBufferedBlocksMax;
   while (dist >= NextBlockToWrite)
     {
-      pthread_cond_wait(notTooMuchNumBuffered, OutMutex);
+      pthread_cond_wait(notTooMuchNumBuffered, &OutMutex);
     }
   size_t outBuffPos = OutBufferPosToWrite + element->blockNumber - NextBlockToWrite;
   if (outBuffPos >= NumBufferedBlocksMax)
@@ -230,8 +213,12 @@ void outputBufferAdd(outBuff *element)
     }
   // 4th array bound check
   // assert(0<=outBuffPos && outBuffPos<OutputBuffer_length);
-  OutputBuffer[outBuffPos] = *element;
-  pthread_mutex_unlock(OutMutex);
+  //OutputBuffer[outBuffPos] = *element;
+  OutputBuffer[outBuffPos].buf = element->buf;
+  OutputBuffer[outBuffPos].bufSize = element->bufSize;
+  OutputBuffer[outBuffPos].blockNumber = element->blockNumber;
+  OutputBuffer[outBuffPos].inSize = element->inSize;
+  pthread_mutex_unlock(&OutMutex);
   return;
 }
 
@@ -240,8 +227,8 @@ int main(int argc, char* argv[])
   pthread_t consumer_t1;
   pthread_t consumer_t2;
   pthread_t fileWriter_t;
-  OutMutex = (pthread_mutex_t *) malloc(sizeof(pthread_mutex_t));
-  pthread_mutex_init(OutMutex, NULL);
+  //OutMutex = (pthread_mutex_t *) malloc(sizeof(pthread_mutex_t));
+  pthread_mutex_init(&OutMutex, NULL);
   fifo = queueInit(2);
   outputBufferInit(NumBufferedBlocksMax);
   pthread_create(&consumer_t1, NULL, consumer, NULL);
@@ -249,12 +236,12 @@ int main(int argc, char* argv[])
   pthread_create(&fileWriter_t, NULL, fileWriter, NULL);
   producer();
   pthread_join(fileWriter_t, NULL);
-  pthread_kill(consumer_t1, SIGKILL);
-  pthread_kill(consumer_t2, SIGKILL);
+  //pthread_join(consumer_t1, SIGKILL);
+  //pthread_join(consumer_t2, SIGKILL);
   free(OutputBuffer);
   queueDelete(fifo);
-  pthread_mutex_destroy(OutMutex);
-  free(OutMutex);
+  pthread_mutex_destroy(&OutMutex);
+  //free(OutMutex);
   return 0;
 }
 

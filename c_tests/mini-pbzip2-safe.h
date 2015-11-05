@@ -27,16 +27,14 @@ typedef struct outBuff
   unsigned int inSize;
 } outBuff;
 
-#define DSIZE 2
-
 typedef outBuff ElementType;
 typedef ElementType* ElementTypePtr;
 typedef struct queue
 {
-	ElementTypePtr qData[DSIZE];
+	ElementTypePtr *qData;
 	long size;
 	long head, tail;
 	int full, empty;
-	pthread_mutex_t mut;
-	//pthread_cond_t *notFull, *notEmpty;
+	pthread_mutex_t *mut;
+	pthread_cond_t *notFull, *notEmpty;
 } queue;
