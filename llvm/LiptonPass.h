@@ -180,6 +180,7 @@ struct LLVMThread {
     AliasSetTracker                            *Aliases = nullptr;
     AllocaInst                                 *PhaseVar = nullptr;
     DenseMap<Instruction *, LLVMInstr *>          Instructions;
+    DenseMap<BasicBlock *, list<BasicBlock *> *>      Pi; // Block SCC partition
 
     bool isSingleton ();
 

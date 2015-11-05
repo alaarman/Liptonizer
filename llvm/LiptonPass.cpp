@@ -77,7 +77,11 @@ static const char *PTHREAD_RLOCK    = "pthread_rwlock_rdlock";
 static const char *PTHREAD_WLOCK    = "pthread_rwlock_wrlock";
 static const char *PTHREAD_RW_UNLOCK= "pthread_rwlock_unlock";
 static const char *PTHREAD_UNLOCK   = "pthread_mutex_unlock";
-static const char *PTHREAD_MUTEX_INIT = "pthread_mutex_init";
+static const char *PTHREAD_MUTEX_INIT= "pthread_mutex_in";
+static const char *PTHREAD_COND_REG = "__cond_register";
+static const char *PTHREAD_COND_WAIT= "__cond_wait";
+static const char *PTHREAD_COND_SGNL= "__cond_signal";
+static const char *PTHREAD_COND_BCST= "__cond_broadcast";
 static const char *ATOMIC_BEGIN     = "atomic_begin";
 static const char *ATOMIC_END       = "atomic_end";
 
@@ -591,13 +595,17 @@ struct LockSearch : public LiptonPass::Processor {
         if (kind == ThreadStart && !PT->isCorrectThreads()) return; // nothing to do
 
         AliasAnalysis::Location L;
+        AliasAnalysis::ModRefResult Mask;
 //        if (kind == ThreadStart && !add) { // PTHREAD_JOIN
 //            Value *Temp = Call->getArgOperand(0);
 //            LoadInst *Load = dyn_cast<LoadInst>(Temp);
 //            L = AA->getLocation(Load);
 //        } else {
-            AliasAnalysis::ModRefResult Mask;
+        if (Call->getCalledFunction()->getName().endswith(PTHREAD_COND_WAIT)) {
+            L = AA->getArgLocation (Call, 1, Mask);
+        } else {
             L = AA->getArgLocation (Call, 0, Mask);
+        }
 //        }
 
         int matches = PT->findAlias (kind, L);
@@ -632,6 +640,11 @@ struct LockSearch : public LiptonPass::Processor {
             addPThread (Call, TotalLock, true);
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_RW_UNLOCK)) {
             addPThread (Call, AnyLock, false);
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_COND_REG)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_COND_WAIT)) {
+            addPThread (Call, TotalLock, true);
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_COND_SGNL)) {
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_COND_BCST)) {
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_UNLOCK)) {
             addPThread (Call, TotalLock, false);
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_CREATE)) {
@@ -733,15 +746,20 @@ struct Collect : public LiptonPass::Processor {
         S[IB] = &BB;    // reinsert basic block when backtracking (off stack)
 
         scc--;
+        list<BasicBlock *> *SCC = new list<BasicBlock *>(); // record SCC
         if (IB == B.back()) {
             while (IB <= S.size()) {
                 BasicBlock *XX = S.back ();
+                SCC->push_back (XX);
                 assert (XX != nullptr);
                 I[XX] = scc;
                 for (Instruction &I : *XX) {
                     ThreadF->getInstruction(&I).Loops = true;
                 }
                 S.pop_back ();
+            }
+            for (BasicBlock *XX : *SCC) {
+                ThreadF->Pi[XX] = SCC;
             }
             B.pop_back ();
         }
@@ -911,6 +929,14 @@ struct Liptonize : public LiptonPass::Processor {
             Mover = RightMover;
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_RW_UNLOCK)) {
             Mover = LeftMover;
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_COND_REG)) {
+            Mover = LeftMover;
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_COND_WAIT)) {
+            Mover = RightMover;
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_COND_SGNL)) {
+            Mover = BothMover;
+        } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_COND_BCST)) {
+            Mover = BothMover;
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_UNLOCK)) {
             Mover = LeftMover;
         } else if (Call->getCalledFunction()->getName().endswith(PTHREAD_JOIN)) {
