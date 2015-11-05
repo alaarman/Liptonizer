@@ -57,14 +57,17 @@ static Constant *POSTCOMMIT = TRUE;
 static char PTHREAD_CREATE[100];
 static int  PTHREAD_CREATE_F_IDX = 1;
 static char PTHREAD_JOIN[100];
+static char PTHREAD_KILL[100];
 
 static const char *PTHREAD1_CREATE   = "__thread_spawn";
 static const int   PTHREAD1_CREATE_F_IDX = 1;
 static const char *PTHREAD1_JOIN     = "__thread_join";
+static const char *PTHREAD1_KILL     = "__thread_kill";
 
 static const char *PTHREAD2_CREATE   = "pthread_create";
 static const int   PTHREAD2_CREATE_F_IDX = 2;
 static const char *PTHREAD2_JOIN     = "pthread_join";
+static const char *PTHREAD2_KILL     = "pthread_kill";
 
 
 static const char *ASSERT           = "assert";
@@ -77,7 +80,7 @@ static const char *PTHREAD_RLOCK    = "pthread_rwlock_rdlock";
 static const char *PTHREAD_WLOCK    = "pthread_rwlock_wrlock";
 static const char *PTHREAD_RW_UNLOCK= "pthread_rwlock_unlock";
 static const char *PTHREAD_UNLOCK   = "pthread_mutex_unlock";
-static const char *PTHREAD_MUTEX_INIT= "pthread_mutex_in";
+static const char *PTHREAD_MUTEX_INIT= "pthread_mutex_init";
 static const char *PTHREAD_COND_REG = "__cond_register";
 static const char *PTHREAD_COND_WAIT= "__cond_wait";
 static const char *PTHREAD_COND_SGNL= "__cond_signal";
@@ -188,8 +191,11 @@ LiptonPass::Processor::isBlockStart (Instruction *I)
 LLVMInstr &
 LLVMThread::getInstruction (Instruction *I)
 {
+    LLASSERT (&this->F == I->getParent()->getParent(),
+              "Different thread: "<< this->F.getName() << " <> "<<
+              I->getParent()->getParent()->getName());
     if (Instructions.find(I) == Instructions.end()) {
-        Instructions.insert(make_pair(I, new LLVMInstr()));
+        Instructions.insert(make_pair(I, new LLVMInstr(I)));
     }
     return *(*Instructions.find(I)).second;
 }
@@ -198,13 +204,14 @@ int
 LLVMThread::NrRuns ()
 {
     int Runs = Starts.size ();
-    for (Instruction *I : Starts) {
-        if (I == nullptr)
+    for (CallInst *C : Starts) {
+        if (C == nullptr)
             break; // MAIN
-            if (getInstruction(I).Loops) {
+        Function *Starter = C->getParent ()->getParent ();
+        LLASSERT (Threads->find(Starter) != Threads->end(), "Thread created? "<< Starter->getName());
+        if (Threads[0][Starter]->getInstruction(C).SCC->Loops) {
             Runs = -1; // potentially infinite
-            errs () << "THREAD: " << F.getName ()
-                    << " (Potentially infinite)" << endll << *I << endll;
+            errs () << "THREAD: " << F.getName () << " (Potentially infinite)" << endll << *C << endll;
             break;
         }
     }
@@ -585,7 +592,7 @@ struct LockSearch : public LiptonPass::Processor {
         ThreadF = Pass->Threads[T];
 
         // Only main starts out single threaded
-        PT = new PThreadType(T->getName().equals("main")); //TODO: leak?
+        PT = new PThreadType(T->getName().equals("main"));
     }
 
     void
@@ -697,7 +704,7 @@ struct Collect : public LiptonPass::Processor {
 
     static StringRef                Action;
 
-    // See Gabow's SCC algorithm
+    // See Gabow's SCC algorithm extended with stack identification
     int                                         scc = 0;
     vector<BasicBlock *>                        S;
     vector<int>                                 B;
@@ -745,21 +752,16 @@ struct Collect : public LiptonPass::Processor {
 
         S[IB] = &BB;    // reinsert basic block when backtracking (off stack)
 
-        scc--;
-        list<BasicBlock *> *SCC = new list<BasicBlock *>(); // record SCC
         if (IB == B.back()) {
+            scc--;
+            LLVMSCC     *SCC = new LLVMSCC (ThreadF); // record SCC
             while (IB <= S.size()) {
                 BasicBlock *XX = S.back ();
-                SCC->push_back (XX);
+                for (Instruction &II : *XX)
+                    SCC->add (&II);
                 assert (XX != nullptr);
                 I[XX] = scc;
-                for (Instruction &I : *XX) {
-                    ThreadF->getInstruction(&I).Loops = true;
-                }
                 S.pop_back ();
-            }
-            for (BasicBlock *XX : *SCC) {
-                ThreadF->Pi[XX] = SCC;
             }
             B.pop_back ();
         }
@@ -846,7 +848,7 @@ struct Liptonize : public LiptonPass::Processor {
             return true;
         } else if (V.Index < 0) { // Stack
 
-            Instruction *Start = getFirstNonTerminal (B.getFirstNonPHI ());
+            Instruction *Start = getFirstNonTerminal (B.getFirstNonPHI());
             insertBlock (Start, LoopBlock);                 // Close cycle
 
             StackElem &Previous = Stack[-V.Index - 1];
@@ -1316,10 +1318,30 @@ insertYield (Instruction* I, Function *YieldF, int block)
     CallInst::Create (YieldF, blockId, "", I);
 }
 
-static void
-insertLoopYields (Instruction *I, area_e Area, int block, AllocaInst* Phase)
+bool
+leftMoverInSCC (LLVMSCC *SCC)
 {
-    if (Area == Top) {
+    for (LLVMInstr *LI : SCC->Insts) {
+        if (LI->Mover == LeftMover) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool
+LLVMSCC::hasLeftMovers ()
+{
+    if (hasLeft == -1)
+        hasLeft = leftMoverInSCC (this);
+    return hasLeft;
+}
+
+static void
+insertLoopYields (LLVMInstr &LI, Instruction *I, area_e Area, int block,
+                  AllocaInst* Phase)
+{
+    if (Area == Top && LI.SCC->hasLeftMovers()) {
         TerminatorInst* ThenTerm;
         TerminatorInst* ElseTerm;
         LoadInst* P = new LoadInst (Phase, "", I);
@@ -1340,14 +1362,14 @@ insertLoopYields (Instruction *I, area_e Area, int block, AllocaInst* Phase)
 }
 
 static TerminatorInst *
-insertDynYield (Instruction *I, Instruction *Cond, area_e Area, block_e type,
-                int block, AllocaInst *Phase)
+insertDynYield (LLVMInstr &LI, Instruction *I, Instruction *Cond, area_e Area,
+                block_e type, int block, AllocaInst *Phase)
 {
     TerminatorInst* ThenTerm;
     TerminatorInst* ElseTerm;
     if (type & LoopBlock) {
         SplitBlockAndInsertIfThenElse (Cond, I, &ThenTerm, &ElseTerm);
-        insertLoopYields (ElseTerm, Area, block, Phase);
+        insertLoopYields (LI, I, Area, block, Phase);
     } else {
         ThenTerm = SplitBlockAndInsertIfThen (Cond, I, false);
     }
@@ -1379,7 +1401,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
     if (type == StartBlock) {
         return;
     } else if (type == LoopBlock) {
-        insertLoopYields (I, Area, block, Phase);
+        insertLoopYields (LI, I, Area, block, Phase);
         return;
     }
 
@@ -1422,7 +1444,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
     switch (Mover) {
     case LeftMover:
         if (type & LoopBlock)
-            insertLoopYields (I, Area, block, Phase);
+            insertLoopYields (LI, I, Area, block, Phase);
         if (Area != Post)
             new StoreInst(POSTCOMMIT, Phase, I);
         checkAssert (opts.debug, NextTerm, Phase, Post);
@@ -1430,7 +1452,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
     case RightMover:
         if (Area == Top) {
             LoadInst *P = new LoadInst (Phase, "", I);
-            NextTerm = insertDynYield (I, P, Area, type, block, Phase);
+            NextTerm = insertDynYield (LI, I, P, Area, type, block, Phase);
         }
         if (Area & Post) {
             checkAssert (opts.debug, NextTerm, Phase, Post);
@@ -1438,7 +1460,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
             insertYield (NextTerm, YieldGlobal, block);
         } else if (type & LoopBlock) {
             checkAssert (opts.debug, I, Phase, Pre);
-            insertLoopYields (I, Area, block, Phase);
+            insertLoopYields (LI, I, Area, block, Phase);
         }
         break;
     case NoneMover: {
@@ -1468,17 +1490,17 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
 				}
 				break;
 			}
-			NextTerm = insertDynYield (NextTerm, ValChecks, Area, type, block, Phase);
+			NextTerm = insertDynYield (LI, NextTerm, ValChecks, Area, type, block, Phase);
 		}
 
         if (!opts.nodyn && !staticNM) { // if in dynamic conflict (non-commutativity)
             CallInst *ActCall = CallInst::Create(Act, sv, "", NextTerm);
-            NextTerm = insertDynYield (NextTerm, ActCall, Area, type, block, Phase);
+            NextTerm = insertDynYield (LI, NextTerm, ActCall, Area, type, block, Phase);
         }
         switch (Area) {
         case Top: {
             LoadInst *P = new LoadInst (Phase, "", NextTerm);
-            Instruction *PhaseTerm = insertDynYield (NextTerm, P, Area, type, block, Phase);
+            Instruction *PhaseTerm = insertDynYield (LI, NextTerm, P, Area, type, block, Phase);
 
             // then branch (post)
             checkAssert (opts.debug, PhaseTerm, Phase, Post);
@@ -1621,7 +1643,7 @@ LiptonPass::deduceInstances (Module &M)
 {
     Function *Main = M.getFunction ("main");
     ASSERT (Main, "No main function in module");
-    LLVMThread *TT = new LLVMThread (Main);
+    LLVMThread *TT = new LLVMThread (Main, &Threads);
     Threads[Main] = TT;
     TT->Starts.push_back (nullptr);
     for (Function &F : M) {
@@ -1641,12 +1663,10 @@ LiptonPass::deduceInstances (Module &M)
                     ASSERT (F, "Incorrect pthread_create argument?");
                     //Threads (threadF, callInstr); // add to threads (via functor)
                     if (Threads.find(F) == Threads.end()) {
-                        Threads[F] = new LLVMThread (F);
+                        Threads[F] = new LLVMThread (F, &Threads);
                         errs () << "ADDED thread: " << F->getName() <<endll;
                     }
                     Threads[F]->Starts.push_back (Call);
-                } else {
-                    errs () << "handle" <<  *Call << endll;
                 }
             }
         }
@@ -1659,10 +1679,12 @@ LiptonPass::runOnModule (Module &M)
     if (opts.debug) {
         strncpy (PTHREAD_CREATE, PTHREAD2_CREATE, 100);
         strncpy (PTHREAD_JOIN, PTHREAD2_JOIN, 100);
+        strncpy (PTHREAD_KILL, PTHREAD2_KILL, 100);
         PTHREAD_CREATE_F_IDX= PTHREAD2_CREATE_F_IDX;
     } else {
         strncpy (PTHREAD_CREATE, PTHREAD1_CREATE, 100);
         strncpy (PTHREAD_JOIN, PTHREAD1_JOIN, 100);
+        strncpy (PTHREAD_KILL, PTHREAD1_KILL, 100);
         PTHREAD_CREATE_F_IDX = PTHREAD1_CREATE_F_IDX;
     }
 

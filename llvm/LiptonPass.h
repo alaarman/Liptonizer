@@ -138,14 +138,18 @@ public:
     bool isCorrectThreads() { return CorrectThreads; }
 };
 
+struct LLVMThread;
+struct LLVMSCC;
+
 struct LLVMInstr {
     area_e          Area    = Unknown;
     mover_e         Mover   = UnknownMover;
     bool            Atomic  = false;
-    bool            Loops   = false;
     bool            FVS     = false; // member of feedback vertex set?
     PThreadType    *PT      = nullptr;
     bool            isPTCreate= true;
+    Instruction    *I;
+    LLVMSCC        *SCC = nullptr;
 
     bool
     singleThreaded ()
@@ -153,6 +157,8 @@ struct LLVMInstr {
         assert (PT != nullptr);
         return !isPTCreate && PT->singleThreaded();
     }
+
+    LLVMInstr (Instruction *I) : I(I) {}
 };
 
 static Function *
@@ -163,13 +169,13 @@ getFF () {
 
 struct LLVMThread {
     Function                                   &F;
-    vector<Instruction *>                       Starts;
+    vector<CallInst *>                          Starts;
 
     LLVMThread() : F(*getFF()) { assert(false);  }
 
-    LLVMThread(Function *F)
+    LLVMThread(Function *F, DenseMap<Function *, LLVMThread *> *Threads)
     :
-        F(*F)
+        F(*F), Threads(Threads)
     {
         Aliases = new AliasSetTracker(*AA);
     }
@@ -180,11 +186,33 @@ struct LLVMThread {
     AliasSetTracker                            *Aliases = nullptr;
     AllocaInst                                 *PhaseVar = nullptr;
     DenseMap<Instruction *, LLVMInstr *>          Instructions;
-    DenseMap<BasicBlock *, list<BasicBlock *> *>      Pi; // Block SCC partition
+    DenseMap<Function *, LLVMThread *>          *Threads; // pointr to the map in LiptonPass
 
     bool isSingleton ();
 
-    LLVMInstr &getInstruction (Instruction* I);
+    LLVMInstr   &getInstruction (Instruction* I);
+};
+
+struct LLVMSCC {
+    LLVMSCC(LLVMThread *T) : T(T) {}
+
+    list<LLVMInstr *>   Insts;
+    LLVMThread         *T;
+    bool                Loops = false;
+
+    bool                hasLeftMovers();
+
+    void
+    add (Instruction *I)
+    {
+        LLVMInstr *LI = &T->getInstruction (I);
+        Insts.push_back (LI);
+        LI->SCC = this;
+        Loops |= Loops || LI->FVS;
+    }
+
+private:
+    int                 hasLeft = -1;
 };
 
 class LiptonPass : public ModulePass {
