@@ -100,6 +100,8 @@ Type                           *Int64 = nullptr;
 int                             nextBlock = 0;
 
 static const char *SINGLE_THREADED = "singleThreaded";
+static const char *DYN_YIELD_CONDITION = "DynamicYieldCondition";
+
 
 static void
 addMetaData (Instruction *I, const char *type, const char *s)
@@ -1491,6 +1493,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
 				break;
 			}
 			NextTerm = insertDynYield (LI, NextTerm, ValChecks, Area, type, block, Phase);
+            addMetaData (ValChecks, DYN_YIELD_CONDITION, "");
 		}
 
         if (!opts.nodyn && !staticNM) { // if in dynamic conflict (non-commutativity)
