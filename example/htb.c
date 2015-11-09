@@ -51,7 +51,7 @@ process1 (void *arg)
   //pthread_join(ht_init,0);
   int val = 50;//(int )arg;
   int found = find_or_insert (val);
-  //assert (!found);// != FULL);
+  assert (found);// != FULL);
 #ifdef DEBUG
   printf ("%d = %s\n", val, found ? "found" : "inserted");
 #endif
@@ -64,7 +64,7 @@ process2 (void *arg)
   //pthread_join(ht_init,0);
   int val = 20;//(int )arg;
   int found = find_or_insert (val);
-  //assert (!found);// != FULL);
+  assert (found);// != FULL);
 #ifdef DEBUG
   printf ("%d = %s\n", val, found ? "found" : "inserted");
 #endif
@@ -75,9 +75,9 @@ void *
 process3 (void *arg)
 {
   //pthread_join(ht_init,0);
-  int val = 6;//(int )arg;
+  int val = 59;//(int )arg;
   int found = find_or_insert (val);
-  assert (!found);// != FULL);
+  assert (found);// != FULL);
 #ifdef DEBUG
   printf ("%d = %s\n", val, found ? "found" : "inserted");
 #endif
@@ -181,7 +181,7 @@ main ()
 	//for (int i = 0; i < T; i++)
 		pthread_create (&t1, NULL, process1, NULL);//(void *) &value[i]);
 		pthread_create (&t2, NULL, process2, NULL);//(void *) &value[i]);
-        //pthread_create (&t3, NULL, process3, NULL);//(void *) &value[i]);
+        pthread_create (&t3, NULL, process3, NULL);//(void *) &value[i]);
         //pthread_create (&t4, NULL, process4, NULL);//(void *) &value[i]);
         //pthread_create (&t5, NULL, process5, NULL);//(void *) &value[i]);
         //pthread_create (&t6, NULL, process6, NULL);//(void *) &value[i]);
@@ -195,8 +195,8 @@ main ()
 		found_total += 1;//res;
 		pthread_join (t2, NULL);// (void **)&res);
 		found_total += 1;//res;
-//        pthread_join (t3, NULL);// (void **)&res);
-//        found_total += 1;//res;
+        pthread_join (t3, NULL);// (void **)&res);
+        found_total += 1;//res;
 //        pthread_join (t4, NULL);// (void **)&res);
 //        found_total += 1;//res;
 //        //pthread_join (t5, NULL);// (void **)&res);
