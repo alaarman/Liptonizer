@@ -35,7 +35,7 @@ void *fileWriter(void *__)
 	}
       pthread_mutex_lock(&OutMutex);
       // 1st array bound check
-      assert(0<=outBufferPos && outBufferPos<OutputBuffer_length);
+      assert(outBufferPos<OutputBuffer_length);
       if ((OutputBuffer[outBufferPos].buf == INVALID))
 	{
 	  pthread_mutex_unlock(&OutMutex);
@@ -47,7 +47,7 @@ void *fileWriter(void *__)
 	  pthread_mutex_unlock(&OutMutex);
 	}
       // 2nd array bound check
-      assert(0<=outBufferPos && outBufferPos<OutputBuffer_length);
+      assert(outBufferPos<OutputBuffer_length);
       outBuff * outBlock = &(OutputBuffer[outBufferPos]);
       printf("FW: I read block number %d.\n", outBlock->blockNumber);
       outBlock->buf = INVALID;
@@ -95,7 +95,7 @@ void *consumer(void *__)
   outBuff *fileData;
   for (;;)
     {
-      assert (fifo->mut != NULL);
+      //assert (fifo->mut != NULL);
       pthread_mutex_lock(fifo->mut);
       for (;;)
 	{
@@ -236,8 +236,8 @@ int main(int argc, char* argv[])
   pthread_create(&fileWriter_t, NULL, fileWriter, NULL);
   producer();
   pthread_join(fileWriter_t, NULL);
-  //pthread_join(consumer_t1, SIGKILL);
-  //pthread_join(consumer_t2, SIGKILL);
+  pthread_kill(consumer_t1, SIGKILL);
+  pthread_kill(consumer_t2, SIGKILL);
   free(OutputBuffer);
   queueDelete(fifo);
   pthread_mutex_destroy(&OutMutex);
