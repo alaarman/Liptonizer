@@ -147,7 +147,7 @@ struct LLVMInstr {
     bool            Atomic  = false;
     bool            FVS     = false; // member of feedback vertex set?
     PThreadType    *PT      = nullptr;
-    bool            isPTCreate= true;
+    bool            isPTCreate= false;
     Instruction    *I;
     LLVMSCC        *SCC = nullptr;
 
