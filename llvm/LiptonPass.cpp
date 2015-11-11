@@ -1240,11 +1240,12 @@ obtainFixedCasValue (SmallVector<AtomicCmpXchgInst *, 8> &cs,
 	    if (verbose) errs () <<"\t"<< * J <<endll;
 	    if (obtainFixedCasConstant(J) != nullptr) {
 	        if (I->getOperand(0)->getType() != J->getOperand(0)->getType()) {
-	            if (verbose) errs () <<"\tCAS Type mismatch:"<< *I << "  --  "<< * J <<endll;
+	            if (verbose) errs () <<"CAS Type mismatch:"<< *I << "  --  "<< * J <<endll;
                 return false;
             }
 	        cs.push_back (dyn_cast<AtomicCmpXchgInst>(J));
 	    } else if (J->mayWriteToMemory()) {
+            if (verbose) errs () <<"CAS Type mismatch:"<< *I << "  --  "<< * J <<endll;
             return false;
         }
 	    SeenI |= I == J;
@@ -1340,13 +1341,13 @@ LLVMSCC::hasLeftMovers ()
 }
 
 static void
-insertLoopYields (LLVMInstr &LI, Instruction *I, area_e Area, int block,
+insertLoopYields (LLVMInstr &NM, Instruction *I, int block,
                   AllocaInst* Phase)
 {
-    if (Area == Top && LI.SCC->hasLeftMovers()) {
-        TerminatorInst* ThenTerm;
-        TerminatorInst* ElseTerm;
-        LoadInst* P = new LoadInst (Phase, "", I);
+    if (NM.Area == Top && NM.SCC->hasLeftMovers()) {
+        TerminatorInst *ThenTerm;
+        TerminatorInst *ElseTerm;
+        LoadInst *P = new LoadInst (Phase, "", I);
         SplitBlockAndInsertIfThenElse (P, I, &ThenTerm, &ElseTerm);
 
         // then (post)
@@ -1355,7 +1356,7 @@ insertLoopYields (LLVMInstr &LI, Instruction *I, area_e Area, int block,
 
         // else (pre)
         insertYield (ElseTerm, YieldLocal, block);
-    } else if (Area == Post) {
+    } else if (NM.Area == Post) {
         new StoreInst (PRECOMMIT, Phase, I);
         insertYield (I, YieldGlobal, block);
     } else {
@@ -1364,14 +1365,14 @@ insertLoopYields (LLVMInstr &LI, Instruction *I, area_e Area, int block,
 }
 
 static TerminatorInst *
-insertDynYield (LLVMInstr &LI, Instruction *I, Instruction *Cond, area_e Area,
+insertDynYield (LLVMInstr &NM, Instruction *I, Instruction *Cond,
                 block_e type, int block, AllocaInst *Phase)
 {
-    TerminatorInst* ThenTerm;
-    TerminatorInst* ElseTerm;
+    TerminatorInst *ThenTerm;
+    TerminatorInst *ElseTerm;
     if (type & LoopBlock) {
         SplitBlockAndInsertIfThenElse (Cond, I, &ThenTerm, &ElseTerm);
-        insertLoopYields (LI, I, Area, block, Phase);
+        insertLoopYields (NM, ElseTerm, block, Phase);
     } else {
         ThenTerm = SplitBlockAndInsertIfThen (Cond, I, false);
     }
@@ -1403,7 +1404,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
     if (type == StartBlock) {
         return;
     } else if (type == LoopBlock) {
-        insertLoopYields (LI, I, Area, block, Phase);
+        insertLoopYields (LI, I, block, Phase);
         return;
     }
 
@@ -1446,7 +1447,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
     switch (Mover) {
     case LeftMover:
         if (type & LoopBlock)
-            insertLoopYields (LI, I, Area, block, Phase);
+            insertLoopYields (LI, I, block, Phase);
         if (Area != Post)
             new StoreInst(POSTCOMMIT, Phase, I);
         checkAssert (opts.debug, NextTerm, Phase, Post);
@@ -1454,7 +1455,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
     case RightMover:
         if (Area == Top) {
             LoadInst *P = new LoadInst (Phase, "", I);
-            NextTerm = insertDynYield (LI, I, P, Area, type, block, Phase);
+            NextTerm = insertDynYield (LI, I, P, type, block, Phase);
         }
         if (Area & Post) {
             checkAssert (opts.debug, NextTerm, Phase, Post);
@@ -1462,7 +1463,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
             insertYield (NextTerm, YieldGlobal, block);
         } else if (type & LoopBlock) {
             checkAssert (opts.debug, I, Phase, Pre);
-            insertLoopYields (LI, I, Area, block, Phase);
+            insertLoopYields (LI, I, block, Phase);
         }
         break;
     case NoneMover: {
@@ -1492,18 +1493,18 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
 				}
 				break;
 			}
-			NextTerm = insertDynYield (LI, NextTerm, ValChecks, Area, type, block, Phase);
+			NextTerm = insertDynYield (LI, NextTerm, ValChecks, type, block, Phase);
             addMetaData (ValChecks, DYN_YIELD_CONDITION, "");
 		}
 
         if (!opts.nodyn && !staticNM) { // if in dynamic conflict (non-commutativity)
             CallInst *ActCall = CallInst::Create(Act, sv, "", NextTerm);
-            NextTerm = insertDynYield (LI, NextTerm, ActCall, Area, type, block, Phase);
+            NextTerm = insertDynYield (LI, NextTerm, ActCall, type, block, Phase);
         }
         switch (Area) {
         case Top: {
             LoadInst *P = new LoadInst (Phase, "", NextTerm);
-            Instruction *PhaseTerm = insertDynYield (LI, NextTerm, P, Area, type, block, Phase);
+            Instruction *PhaseTerm = insertDynYield (LI, NextTerm, P, type, block, Phase);
 
             // then branch (post)
             checkAssert (opts.debug, PhaseTerm, Phase, Post);
