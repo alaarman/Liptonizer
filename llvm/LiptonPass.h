@@ -228,7 +228,7 @@ public:
     LiptonPass();
     LiptonPass(string name, Options &opts);
 
-    DenseMap<AliasSet *, list<Instruction *>>       AS2I;
+    DenseMap<AliasSet *, list<LLVMInstr *>>         AS2I;
     DenseMap<Function *, LLVMThread *>              Threads;
 
     struct Processor {
@@ -263,12 +263,22 @@ private:
     void walkGraph (Module &M);
 
     bool conflictingNonMovers (SmallVector<Value*, 8> &sv,
-                               SmallVector<Instruction *, 8> *Is,
+                               SmallVector<LLVMInstr *, 8> *Is,
                                Instruction *I, LLVMThread *T);
     void initialInstrument (Module &M);
     void finalInstrument (Module &M);
     void deduceInstances (Module &M);
     void refineAliasSets();
+    Instruction *addFixedCAS (LLVMInstr& LI, block_e type, int block,
+                              Instruction* NextTerm, SmallVector<LLVMInstr*, 8> &Is,
+                              AllocaInst* Phase);
+    Instruction *addStaticPtr (LLVMInstr& LI, block_e type, int block,
+                              Instruction* NextTerm, SmallVector<LLVMInstr*, 8> &Is,
+                              AllocaInst* Phase);
+    bool obtainFixedPtrValue (SmallVector<Value *, 8> &cs,
+                              SmallVector<LLVMInstr *, 8> &Is,
+                              LLVMInstr &LI, bool verbose);
+    Value *obtainFixedPtr (LLVMInstr &LI);
 };
 
 }

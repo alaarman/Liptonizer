@@ -782,18 +782,19 @@ struct Collect : public LiptonPass::Processor {
     Instruction *
     process (Instruction *I)
     {
+        LLVMInstr &LI = ThreadF->getInstruction (I);
         if ( I->isTerminator() ||
                 dyn_cast_or_null<PHINode>(I) != nullptr ||
                 !I->mayReadOrWriteMemory() ||
                 isa<DbgInfoIntrinsic>(I) ||
-                ThreadF->getInstruction(I).singleThreaded() ) {
+                LI.singleThreaded ()) {
             return I;
         }
 
         ThreadF->Aliases->add (I);
 
         AliasSet *AS = FindAliasSetForUnknownInst (ThreadF->Aliases, I);
-        Pass->AS2I[AS].push_back(I);
+        Pass->AS2I[AS].push_back(&LI);
         return I;
     }
 };
@@ -1050,19 +1051,17 @@ private:
 
             AliasSet *AS = FindAliasSetForUnknownInst (T2->Aliases, I);
             if (AS == nullptr)  continue;
-			for (Instruction *J : Pass->AS2I[AS]) {
-				if (isCommutingAtomic(I,J)) continue;
-				if (!I->mayWriteToMemory() && !J->mayWriteToMemory()) continue;
-
-				LLVMInstr &LJ = T2->getInstruction(J);
+			for (LLVMInstr *LJ : Pass->AS2I[AS]) {
+				if (isCommutingAtomic(I, LJ->I)) continue;
+				if (!I->mayWriteToMemory() && !LJ->I->mayWriteToMemory()) continue;
 
 				conflict = true;
-	            if (!LI.PT->locks() || !LJ.PT->locks()) break;
+	            if (!LI.PT->locks() || !LJ->PT->locks()) break;
 				if (PT == nullptr) {
 					PT = new PThreadType (LI.PT); // copy
 				}
-				PT->eraseNonAlias (ReadLock, LJ.PT);
-				PT->eraseNonAlias (TotalLock, LJ.PT);
+				PT->eraseNonAlias (ReadLock, LJ->PT);
+				PT->eraseNonAlias (TotalLock, LJ->PT);
 			}
 
             if (conflict && (PT == nullptr || !PT->locks())) {
@@ -1227,7 +1226,7 @@ obtainFixedCasConstant (Instruction *I)
  */
 bool
 obtainFixedCasValue (SmallVector<AtomicCmpXchgInst *, 8> &cs,
-                     SmallVector<Instruction *, 8> &Is,
+                     SmallVector<LLVMInstr *, 8> &Is,
                      Instruction *I, bool verbose)
 {
     bool SeenI = false;
@@ -1236,19 +1235,19 @@ obtainFixedCasValue (SmallVector<AtomicCmpXchgInst *, 8> &cs,
     }
 
     if (verbose) errs () <<"Check CAS:"<< *I <<endll;
-	for (Instruction *J : Is) {
-	    if (verbose) errs () <<"\t"<< * J <<endll;
-	    if (obtainFixedCasConstant(J) != nullptr) {
-	        if (I->getOperand(0)->getType() != J->getOperand(0)->getType()) {
-	            if (verbose) errs () <<"CAS Type mismatch:"<< *I << "  --  "<< * J <<endll;
+	for (LLVMInstr *LJ : Is) {
+	    if (verbose) errs () <<"\t"<< * LJ->I <<endll;
+	    if (obtainFixedCasConstant(LJ->I) != nullptr) {
+	        if (I->getOperand(0)->getType() != LJ->I->getOperand(0)->getType()) {
+	            if (verbose) errs () <<"CAS Type mismatch:"<< *I << "  --  "<< * LJ->I <<endll;
                 return false;
             }
-	        cs.push_back (dyn_cast<AtomicCmpXchgInst>(J));
-	    } else if (J->mayWriteToMemory()) {
-            if (verbose) errs () <<"CAS Type mismatch:"<< *I << "  --  "<< * J <<endll;
+	        cs.push_back (dyn_cast<AtomicCmpXchgInst>(LJ->I));
+	    } else if (LJ->I->mayWriteToMemory()) {
+            if (verbose) errs () <<"CAS Type mismatch:"<< *I << "  --  "<< * LJ->I <<endll;
             return false;
         }
-	    SeenI |= I == J;
+	    SeenI |= I == LJ->I;
 	}
 	if (!SeenI && obtainFixedCasConstant(I) != nullptr) {
 	    cs.push_back (dyn_cast<AtomicCmpXchgInst>(I));
@@ -1264,7 +1263,7 @@ obtainFixedCasValue (SmallVector<AtomicCmpXchgInst *, 8> &cs,
  */
 bool
 LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
-                                  SmallVector<Instruction *, 8> *Is,
+                                  SmallVector<LLVMInstr *, 8> *Is,
                                   Instruction *I, LLVMThread *T)
 {
     // for all other threads
@@ -1277,11 +1276,11 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
 
         DenseSet<int> Blocks;
         // for all conflicting J
-        for (Instruction *J : AS2I[AS]) {
-            if (isCommutingAtomic(I, J)) continue;
-            if (!I->mayWriteToMemory() && !J->mayWriteToMemory()) continue;
+        for (LLVMInstr *LJ : AS2I[AS]) {
+            if (isCommutingAtomic(I, LJ->I)) continue;
+            if (!I->mayWriteToMemory() && !LJ->I->mayWriteToMemory()) continue;
 
-            if (Is != nullptr) Is->push_back(J);
+            if (Is != nullptr) Is->push_back(LJ);
 
             // for all Block starting points TODO: refine to exit points
             for (pair<Instruction *, pair<block_e, int> > X : T2->BlockStarts) {
@@ -1289,7 +1288,7 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
                 int         blockID = X.second.second;
                 //errs () << *I << endll <<*J << endll << *R <<" ++++++ "<< *R->getNextNode() << endll;
 
-                if (R != J && !isPotentiallyReachable(R, J)) continue;
+                if (R != LJ->I && !isPotentiallyReachable(R, LJ->I)) continue;
                 // if R = J or R can reach J
 
                 // add block index to __act
@@ -1365,16 +1364,16 @@ insertLoopYields (LLVMInstr &NM, Instruction *I, int block,
 }
 
 static TerminatorInst *
-insertDynYield (LLVMInstr &NM, Instruction *I, Instruction *Cond,
+insertDynYield (LLVMInstr &NM, Instruction *Before, Instruction *Cond,
                 block_e type, int block, AllocaInst *Phase)
 {
     TerminatorInst *ThenTerm;
     TerminatorInst *ElseTerm;
     if (type & LoopBlock) {
-        SplitBlockAndInsertIfThenElse (Cond, I, &ThenTerm, &ElseTerm);
+        SplitBlockAndInsertIfThenElse (Cond, Before, &ThenTerm, &ElseTerm);
         insertLoopYields (NM, ElseTerm, block, Phase);
     } else {
-        ThenTerm = SplitBlockAndInsertIfThen (Cond, I, false);
+        ThenTerm = SplitBlockAndInsertIfThen (Cond, Before, false);
     }
     return ThenTerm;
 }
@@ -1388,6 +1387,135 @@ checkAssert (bool v, Instruction *I, AllocaInst* Phase, area_e Area)
     if (Area == Pre)
         P = new ICmpInst(I, CmpInst::Predicate::ICMP_EQ,  P, PRECOMMIT);
     CallInst::Create (Assert, P, "", I);
+}
+
+Instruction *
+LiptonPass::addFixedCAS (LLVMInstr &LI, block_e type, int block,
+                         Instruction *NextTerm, SmallVector<LLVMInstr *, 8> &Is,
+                         AllocaInst *Phase)
+{
+    // First collect conflicting non-movers from other threads
+    SmallVector<AtomicCmpXchgInst *, 8> cs;
+    bool fixedCAS = obtainFixedCasValue (cs, Is, LI.I, opts.verbose);
+    if (!opts.nodyn && fixedCAS) {
+        Instruction *ValChecks = nullptr;
+        Value *Ptr = LI.I->getOperand (0);
+        LoadInst *PtrVal = new LoadInst (Ptr, "", NextTerm);
+        for (AtomicCmpXchgInst* Cas : cs) {
+            errs () << "CAS: " << *Cas << endll;
+            Constant *C = obtainFixedCasConstant (Cas);
+            Instruction *New = new ICmpInst (NextTerm, CmpInst::Predicate::ICMP_EQ,
+                                             PtrVal, C);
+            if (ValChecks == nullptr) {
+                ValChecks = New;
+            } else {
+                ValChecks = BinaryOperator::Create (BinaryOperator::BinaryOps::Or,
+                                                    ValChecks, New, "", NextTerm);
+            }
+            break;
+        }
+        NextTerm = insertDynYield (LI, NextTerm, ValChecks, type, block, Phase);
+        addMetaData (ValChecks, DYN_YIELD_CONDITION, "");
+    }
+    return NextTerm;
+}
+
+
+Value *
+LiptonPass::obtainFixedPtr (LLVMInstr &LI)
+{
+    Value *Ptr;
+    if (LoadInst *L = dyn_cast_or_null<LoadInst>(LI.I)) {
+       Ptr = L->getPointerOperand();
+    } else if (StoreInst *S = dyn_cast_or_null<StoreInst>(LI.I)) {
+        Ptr = S->getPointerOperand();
+    } else {
+        return nullptr;
+    }
+    SmallVector<Value *, 8> sv;
+    SmallVector<LLVMInstr *, 8> Is;
+    Instruction *P = dyn_cast_or_null<Instruction> (Ptr);
+
+    LLASSERT (P, "Instruction not found: "<< Ptr);
+    LLVMThread *T = LI.SCC->T;
+    bool staticNM = conflictingNonMovers (sv, &Is, P, T);
+    if (staticNM || !sv.empty()) {
+        if (opts.verbose) errs () <<"PTR no static ptr:"<< *LI.I  <<endll;
+        for (LLVMInstr *LI : Is)
+            if (opts.verbose) errs () <<"\t:"<< *LI->I  <<endll;
+        return nullptr;
+    }
+    return Ptr;
+}
+
+
+/**
+ * From all conflicting instructions, extract a list of all fixed pointer
+ * ops.
+ */
+bool
+LiptonPass::obtainFixedPtrValue (SmallVector<Value *, 8> &cs,
+                     SmallVector<LLVMInstr *, 8> &Is,
+                     LLVMInstr &LI, bool verbose)
+{
+    if (opts.nodyn || !obtainFixedPtr(LI)) return false;
+
+    if (verbose) errs () <<"Check PTR:"<< *LI.I <<endll;
+    for (LLVMInstr *LJ : Is) {
+        if (LI.I == LJ->I) continue;
+        if (verbose) errs () <<"\t"<< *LJ->I <<endll;
+
+        if (Value *Ptr = obtainFixedPtr(*LJ)) {
+            Value *G;
+            if (LoadInst *L = dyn_cast_or_null<LoadInst>(Ptr)) {
+               G = L->getPointerOperand();
+            } else if (StoreInst *S = dyn_cast_or_null<StoreInst>(Ptr)) {
+                G = S->getPointerOperand();
+            } else {
+                return nullptr;
+            }
+            GlobalVariable *V = dyn_cast_or_null<GlobalVariable>(G);
+            cs.push_back (V);
+        } else {
+            if (verbose) errs () <<"\tPTR Type mismatch:"<< *LI.I << "  --  "<< * LJ->I <<endll;
+            return false;
+        }
+
+    }
+    return !cs.empty();
+}
+
+Instruction *
+LiptonPass::addStaticPtr (LLVMInstr &LI, block_e type, int block,
+                         Instruction *NextTerm, SmallVector<LLVMInstr *, 8> &Is,
+                         AllocaInst *Phase)
+{
+    // First collect conflicting non-movers from other threads
+    SmallVector<Value *, 8> cs;
+    bool fixedCAS = obtainFixedPtrValue (cs, Is, LI, opts.verbose);
+
+    if (fixedCAS) {
+        Instruction *ValChecks = nullptr;
+        Value *Ptr1 = obtainFixedPtr (LI);
+        Instruction *PtrI1 = dyn_cast_or_null<Instruction>(Ptr1);
+        for (Value *Ptr2 : cs) {
+            GlobalVariable *V = dyn_cast_or_null<GlobalVariable>(Ptr2);
+            errs () << "PTR: " << *Ptr1 << " <--> " << *Ptr2 << endll;
+            Instruction *Load = new LoadInst(V, "", PtrI1);
+            Instruction *New = new ICmpInst (NextTerm, CmpInst::Predicate::ICMP_EQ,
+                                             Ptr1, Load);
+            if (ValChecks == nullptr) {
+                ValChecks = New;
+            } else {
+                ValChecks = BinaryOperator::Create (BinaryOperator::BinaryOps::Or,
+                                                    ValChecks, New, "", NextTerm);
+            }
+            break;
+        }
+        NextTerm = insertDynYield (LI, NextTerm, ValChecks, type, block, Phase);
+        addMetaData (ValChecks, DYN_YIELD_CONDITION, "");
+    }
+    return NextTerm;
 }
 
 void
@@ -1468,35 +1596,15 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
         break;
     case NoneMover: {
         // First collect conflicting non-movers from other threads
-        SmallVector<Instruction *, 8> Is;
-        SmallVector<AtomicCmpXchgInst *, 8> cs;
+        SmallVector<LLVMInstr *, 8> Is;
         bool staticNM = conflictingNonMovers (sv, &Is, I, T);
-        LLASSERT (!sv.empty(), "Unexpected("<< staticNM <<"), no conflicts found for: "<< *I);
 
-		bool fixedCAS = obtainFixedCasValue (cs, Is, I, opts.verbose);
+        NextTerm = addFixedCAS (LI, type, block, NextTerm, Is, Phase);
 
-		if (!opts.nodyn && fixedCAS) {
-			Instruction *ValChecks = nullptr;
-            Value *Ptr = I->getOperand (0);
-            LoadInst *PtrVal = new LoadInst (Ptr, "", NextTerm);
+        NextTerm = addStaticPtr (LI, type, block, NextTerm, Is, Phase);
 
-            for (AtomicCmpXchgInst *Cas : cs) {
-                errs () << "CAS: "<< *Cas << endll;
-				Constant *C = obtainFixedCasConstant (Cas);
-				Instruction *New = new ICmpInst(NextTerm,
-								CmpInst::Predicate::ICMP_EQ,  PtrVal, C);
-				if (ValChecks == nullptr) {
-					ValChecks = New;
-				} else {
-					ValChecks = BinaryOperator::Create(BinaryOperator::BinaryOps::And,
-							ValChecks, New, "", NextTerm);
-				}
-				break;
-			}
-			NextTerm = insertDynYield (LI, NextTerm, ValChecks, type, block, Phase);
-            addMetaData (ValChecks, DYN_YIELD_CONDITION, "");
-		}
-
+        LLASSERT(!sv.empty (),
+                 "Unexpected("<< staticNM <<"), no conflicts found for: "<< *I);
         if (!opts.nodyn && !staticNM) { // if in dynamic conflict (non-commutativity)
             CallInst *ActCall = CallInst::Create(Act, sv, "", NextTerm);
             NextTerm = insertDynYield (LI, NextTerm, ActCall, type, block, Phase);
