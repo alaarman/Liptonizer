@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#define PROBE_MAX 100
+#define PROBE_MAX 10
 
 static int a1;
 static int a2;
