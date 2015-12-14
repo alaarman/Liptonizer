@@ -114,6 +114,8 @@ public:
     bool operator<=(PThreadType &O);
     void print (bool read, bool write, bool threads);
     bool locks  ();
+    bool locks1  ();
+    PTCallType *get1Lock ();
 
     PThreadType *overlap(pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call);
     PThreadType *add    (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call);
@@ -123,6 +125,7 @@ public:
     // exception to COW (used to reduce lock set candidates):
     void eraseNonAlias  (pt_e kind, const AliasAnalysis::Location &Loc, CallInst *Call);
     void eraseNonAlias (pt_e kind, PThreadType *O);
+    PTCallType *merge1 (PThreadType *O);
 
     int  findAlias   (pt_e kind, const AliasAnalysis::Location &Loc);
 
@@ -279,6 +282,8 @@ private:
                               SmallVector<LLVMInstr *, 8> &Is,
                               LLVMInstr &LI, bool verbose);
     Value *obtainFixedPtr (LLVMInstr &LI);
+
+    LLVMInstr *lockPointers (SmallVector<Value *, 8> &pts, LLVMInstr &LI);
 };
 
 }

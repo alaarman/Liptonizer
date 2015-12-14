@@ -320,6 +320,18 @@ removeNonAlias (list<PTCallType> &List, const AliasAnalysis::Location &Lock)
     }
 }
 
+PTCallType *
+PThreadType::merge1 (PThreadType *PT)
+{
+    for (PTCallType &CT2 : *PT->WriteLocks) {
+        if (!findAlias(TotalLock, *CT2.first)) {
+            WriteLocks->push_back(CT2);
+            return &CT2;
+        }
+    }
+    return nullptr;
+}
+
 bool
 PThreadType::operator<=(PThreadType &O)
 {
@@ -374,6 +386,18 @@ bool
 PThreadType::locks ()
 {
     return !ReadLocks->empty() || !WriteLocks->empty();
+}
+
+bool
+PThreadType::locks1 ()
+{
+    return WriteLocks->size() == 1;
+}
+
+PTCallType *
+PThreadType::get1Lock ()
+{
+    return &WriteLocks->front();
 }
 
 int
@@ -611,9 +635,17 @@ struct LockSearch : public LiptonPass::Processor {
 //            L = AA->getLocation(Load);
 //        } else {
         if (Call->getCalledFunction()->getName().endswith(PTHREAD_COND_WAIT)) {
-            L = AA->getArgLocation (Call, 1, Mask);
+            if (LoadInst *Load = dyn_cast_or_null<LoadInst>(Call->getArgOperand(1))) {
+                L = AA->getLocation(Load);
+            } else {
+                L = AA->getArgLocation (Call, 1, Mask);
+            }
         } else {
-            L = AA->getArgLocation (Call, 0, Mask);
+            if (LoadInst *Load = dyn_cast_or_null<LoadInst>(Call->getArgOperand(0))) {
+                L = AA->getLocation(Load);
+            } else {
+                L = AA->getArgLocation (Call, 0, Mask);
+            }
         }
 //        }
 
@@ -1364,7 +1396,7 @@ insertLoopYields (LLVMInstr &NM, Instruction *I, int block,
 }
 
 static TerminatorInst *
-insertDynYield (LLVMInstr &NM, Instruction *Before, Instruction *Cond,
+insertDynYield (LLVMInstr &NM, Instruction *Before, Value *Cond,
                 block_e type, int block, AllocaInst *Phase)
 {
     TerminatorInst *ThenTerm;
@@ -1429,6 +1461,8 @@ LiptonPass::obtainFixedPtr (LLVMInstr &LI)
        Ptr = L->getPointerOperand();
     } else if (StoreInst *S = dyn_cast_or_null<StoreInst>(LI.I)) {
         Ptr = S->getPointerOperand();
+    } else if (CallInst *C = dyn_cast_or_null<CallInst>(LI.I)) { // lock
+        Ptr = C->getOperand(0);
     } else {
         return nullptr;
     }
@@ -1488,6 +1522,57 @@ LiptonPass::obtainFixedPtrValue (SmallVector<Value *, 8> &cs,
     return !cs.empty();
 }
 
+LLVMInstr *
+LiptonPass::lockPointers (SmallVector<Value *, 8> &pts, LLVMInstr &LI)
+{
+    LLVMThread *T = LI.SCC->T;
+
+    PThreadType *PT = new PThreadType (true);
+    assert (LI.PT != nullptr);
+
+    for (pair<Function *, LLVMThread *> &X : Threads) {
+        LLVMThread *T2 = X.second;
+        if (T == T2 && T->isSingleton()) continue;
+
+        AliasSet *AS = FindAliasSetForUnknownInst (T2->Aliases, LI.I);
+        if (AS == nullptr)  continue;
+        for (LLVMInstr *LJ : AS2I[AS]) {
+            if (isCommutingAtomic(LI.I, LJ->I)) continue;
+            if (!LI.I->mayWriteToMemory() && !LJ->I->mayWriteToMemory()) continue;
+
+            if (!LI.PT->locks1() || !LJ->PT->locks1()) return nullptr;
+            if (PTCallType *CT = PT->merge1 (LJ->PT)) {
+                LLVMInstr &Call = T2->getInstruction (CT->second);
+                Value *V = obtainFixedPtr(Call);
+
+                Value *G;
+                if (LoadInst *L = dyn_cast_or_null<LoadInst>(V)) {
+                   G = L->getPointerOperand();
+                } else if (StoreInst *S = dyn_cast_or_null<StoreInst>(V)) {
+                    G = S->getPointerOperand();
+                } else {
+                    return nullptr;
+                }
+                GlobalVariable *GV = dyn_cast_or_null<GlobalVariable>(G);
+
+                if (GV == nullptr) {
+                    errs () <<"NO LOCK PTR: " << *Call.I << endll;
+                    return nullptr;
+                } else {
+                    errs () <<"FOUND LOCK PTR: " << *GV << endll;
+                }
+                pts.push_back (GV);
+            }
+        }
+    }
+    delete PT;
+
+    LLVMInstr &Call = T->getInstruction (LI.PT->get1Lock()->second);
+    return &Call;
+}
+
+
+
 Instruction *
 LiptonPass::addStaticPtr (LLVMInstr &LI, block_e type, int block,
                          Instruction *NextTerm, SmallVector<LLVMInstr *, 8> &Is,
@@ -1495,29 +1580,52 @@ LiptonPass::addStaticPtr (LLVMInstr &LI, block_e type, int block,
 {
     // First collect conflicting non-movers from other threads
     SmallVector<Value *, 8> cs;
-    bool fixedCAS = obtainFixedPtrValue (cs, Is, LI, opts.verbose);
+    bool fixedPTR = obtainFixedPtrValue (cs, Is, LI, opts.verbose);
+    if (!fixedPTR) {
+        SmallVector<LLVMInstr *, 8> pts;
+        LLVMInstr *Ptr = lockPointers (cs, LI);
+        if (Ptr == nullptr) return NextTerm;
 
-    if (fixedCAS) {
-        Instruction *ValChecks = nullptr;
-        Value *Ptr1 = obtainFixedPtr (LI);
+        Value *Ptr1 = obtainFixedPtr (*Ptr);
+
+        Value       *ValChecks = FALSE;
         Instruction *PtrI1 = dyn_cast_or_null<Instruction>(Ptr1);
         for (Value *Ptr2 : cs) {
             GlobalVariable *V = dyn_cast_or_null<GlobalVariable>(Ptr2);
-            errs () << "PTR: " << *Ptr1 << " <--> " << *Ptr2 << endll;
+            assert (V);
+            errs () << "LOCK PTR: " << *Ptr1 << " <--> " << *Ptr2 << endll;
             Instruction *Load = new LoadInst(V, "", PtrI1);
-            Instruction *New = new ICmpInst (NextTerm, CmpInst::Predicate::ICMP_EQ,
+            Instruction *New = new ICmpInst (NextTerm, CmpInst::Predicate::ICMP_NE,
                                              Ptr1, Load);
-            if (ValChecks == nullptr) {
-                ValChecks = New;
-            } else {
-                ValChecks = BinaryOperator::Create (BinaryOperator::BinaryOps::Or,
-                                                    ValChecks, New, "", NextTerm);
-            }
-            break;
+
+            ValChecks = BinaryOperator::Create (BinaryOperator::BinaryOps::Or,
+                                                ValChecks, New, "", NextTerm);
         }
         NextTerm = insertDynYield (LI, NextTerm, ValChecks, type, block, Phase);
-        addMetaData (ValChecks, DYN_YIELD_CONDITION, "");
+        //addMetaData (ValChecks, DYN_YIELD_CONDITION, "");
+
+        return NextTerm;
     }
+
+    Instruction *ValChecks = nullptr;
+    Value *Ptr1 = obtainFixedPtr (LI);
+    Instruction *PtrI1 = dyn_cast_or_null<Instruction>(Ptr1);
+    for (Value *Ptr2 : cs) {
+        GlobalVariable *V = dyn_cast_or_null<GlobalVariable>(Ptr2);
+        errs () << "PTR: " << *Ptr1 << " <--> " << *Ptr2 << endll;
+        Instruction *Load = new LoadInst(V, "", PtrI1);
+        Instruction *New = new ICmpInst (NextTerm, CmpInst::Predicate::ICMP_EQ,
+                                         Ptr1, Load);
+        if (ValChecks == nullptr) {
+            ValChecks = New;
+        } else {
+            ValChecks = BinaryOperator::Create (BinaryOperator::BinaryOps::Or,
+                                                ValChecks, New, "", NextTerm);
+        }
+    }
+    NextTerm = insertDynYield (LI, NextTerm, ValChecks, type, block, Phase);
+    addMetaData (ValChecks, DYN_YIELD_CONDITION, "");
+
     return NextTerm;
 }
 
