@@ -1436,7 +1436,10 @@ LiptonPass::obtainFixedPtr (LLVMInstr &LI)
     SmallVector<LLVMInstr *, 8> Is;
     Instruction *P = dyn_cast_or_null<Instruction> (Ptr);
 
-    LLASSERT (P, "Instruction not found: "<< Ptr);
+    if (!P) {
+        errs () << "UNSUPPORTED DYNAMIC LOAD: "<< *Ptr <<endll;
+        return nullptr;
+    }
     LLVMThread *T = LI.SCC->T;
     bool staticNM = conflictingNonMovers (sv, &Is, P, T);
     if (staticNM || !sv.empty()) {
