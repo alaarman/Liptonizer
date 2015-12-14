@@ -283,7 +283,8 @@ private:
                               LLVMInstr &LI, bool verbose);
     Value *obtainFixedPtr (LLVMInstr &LI);
 
-    LLVMInstr *lockPointers (SmallVector<Value *, 8> &pts, LLVMInstr &LI);
+    LLVMInstr *lockPointers (SmallVector<Value *, 8> &pts,
+                             SmallVector<LLVMInstr *, 8> &Is, LLVMInstr &LI);
 };
 
 }

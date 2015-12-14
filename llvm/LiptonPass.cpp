@@ -1495,7 +1495,7 @@ LiptonPass::obtainFixedPtrValue (SmallVector<Value *, 8> &cs,
                      SmallVector<LLVMInstr *, 8> &Is,
                      LLVMInstr &LI, bool verbose)
 {
-    if (opts.nodyn || !obtainFixedPtr(LI)) return false;
+    if (!obtainFixedPtr(LI)) return false;
 
     if (verbose) errs () <<"Check PTR:"<< *LI.I <<endll;
     for (LLVMInstr *LJ : Is) {
@@ -1512,7 +1512,11 @@ LiptonPass::obtainFixedPtrValue (SmallVector<Value *, 8> &cs,
                 return nullptr;
             }
             GlobalVariable *V = dyn_cast_or_null<GlobalVariable>(G);
-            cs.push_back (V);
+            bool found = false;
+            for (Value *GV2 : cs) {
+                if (GV2 == V) {break; found = true; }
+            }
+            if (!found) cs.push_back (V);
         } else {
             if (verbose) errs () <<"\tPTR Type mismatch:"<< *LI.I << "  --  "<< * LJ->I <<endll;
             return false;
@@ -1523,46 +1527,48 @@ LiptonPass::obtainFixedPtrValue (SmallVector<Value *, 8> &cs,
 }
 
 LLVMInstr *
-LiptonPass::lockPointers (SmallVector<Value *, 8> &pts, LLVMInstr &LI)
+LiptonPass::lockPointers (SmallVector<Value *, 8> &pts,
+                          SmallVector<LLVMInstr *, 8> &Is, LLVMInstr &LI)
 {
     LLVMThread *T = LI.SCC->T;
 
     PThreadType *PT = new PThreadType (true);
     assert (LI.PT != nullptr);
 
-    for (pair<Function *, LLVMThread *> &X : Threads) {
-        LLVMThread *T2 = X.second;
-        if (T == T2 && T->isSingleton()) continue;
+    if (!LI.PT->locks1()) return nullptr;
 
-        AliasSet *AS = FindAliasSetForUnknownInst (T2->Aliases, LI.I);
-        if (AS == nullptr)  continue;
-        for (LLVMInstr *LJ : AS2I[AS]) {
-            if (isCommutingAtomic(LI.I, LJ->I)) continue;
-            if (!LI.I->mayWriteToMemory() && !LJ->I->mayWriteToMemory()) continue;
+    for (LLVMInstr *LJ : Is) {
+        if (LI.I == LJ->I) continue;
 
-            if (!LI.PT->locks1() || !LJ->PT->locks1()) return nullptr;
-            if (PTCallType *CT = PT->merge1 (LJ->PT)) {
-                LLVMInstr &Call = T2->getInstruction (CT->second);
-                Value *V = obtainFixedPtr(Call);
+        LLVMThread *T2 = LJ->SCC->T;
 
-                Value *G;
-                if (LoadInst *L = dyn_cast_or_null<LoadInst>(V)) {
-                   G = L->getPointerOperand();
-                } else if (StoreInst *S = dyn_cast_or_null<StoreInst>(V)) {
-                    G = S->getPointerOperand();
-                } else {
-                    return nullptr;
-                }
-                GlobalVariable *GV = dyn_cast_or_null<GlobalVariable>(G);
+        if (!LJ->PT->locks1()) return nullptr;
 
-                if (GV == nullptr) {
-                    errs () <<"NO LOCK PTR: " << *Call.I << endll;
-                    return nullptr;
-                } else {
-                    errs () <<"FOUND LOCK PTR: " << *GV << endll;
-                }
-                pts.push_back (GV);
+        if (PTCallType *CT = PT->merge1 (LJ->PT)) {
+            LLVMInstr &Call = T2->getInstruction (CT->second);
+            Value *V = obtainFixedPtr(Call);
+
+            Value *G;
+            if (LoadInst *L = dyn_cast_or_null<LoadInst>(V)) {
+               G = L->getPointerOperand();
+            } else if (StoreInst *S = dyn_cast_or_null<StoreInst>(V)) {
+                G = S->getPointerOperand();
+            } else {
+                return nullptr;
             }
+            GlobalVariable *GV = dyn_cast_or_null<GlobalVariable>(G);
+
+            if (GV == nullptr) {
+                errs () <<"NO LOCK PTR: " << *Call.I << endll;
+                return nullptr;
+            } else {
+                errs () <<"FOUND LOCK PTR: " << *GV << endll;
+            }
+            bool found = false;
+            for (Value *GV2 : pts) {
+                if (GV2 == GV) {break; found = true; }
+            }
+            if (!found) pts.push_back (GV);
         }
     }
     delete PT;
@@ -1578,12 +1584,15 @@ LiptonPass::addStaticPtr (LLVMInstr &LI, block_e type, int block,
                          Instruction *NextTerm, SmallVector<LLVMInstr *, 8> &Is,
                          AllocaInst *Phase)
 {
+    if (opts.nodyn) return NextTerm;
+
     // First collect conflicting non-movers from other threads
     SmallVector<Value *, 8> cs;
     bool fixedPTR = obtainFixedPtrValue (cs, Is, LI, opts.verbose);
+
     if (!fixedPTR) {
         SmallVector<LLVMInstr *, 8> pts;
-        LLVMInstr *Ptr = lockPointers (cs, LI);
+        LLVMInstr *Ptr = lockPointers (cs, Is, LI);
         if (Ptr == nullptr) return NextTerm;
 
         Value *Ptr1 = obtainFixedPtr (*Ptr);
