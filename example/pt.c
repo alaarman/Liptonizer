@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#define PROBE_MAX 10
+#define PROBE_MAX 5
 
 static int a1;
 static int a2;
@@ -27,7 +27,7 @@ void *
 w1 (void *x)
 {
 	for (int i = 0; i < PROBE_MAX; ++i) {
-		*p1 += 1;
+		*p1 = 1;
 	}
 	return NULL;
 }
@@ -35,7 +35,7 @@ void *
 w2 (void *x)
 {
     for (int i = 0; i < PROBE_MAX; ++i) {
-        *p2 += 1;
+        *p2 = 2;
     }
     return NULL;
 }
@@ -43,7 +43,7 @@ void *
 w3 (void *x)
 {
     for (int i = 0; i < PROBE_MAX; ++i) {
-        *p3 += 1;
+        *p3 = 3;
     }
     return NULL;
 }
@@ -51,7 +51,7 @@ void *
 w4 (void *x)
 {
     for (int i = 0; i < PROBE_MAX; ++i) {
-        *p4 += 1;
+        *p4 = 4;
     }
     return NULL;
 }
@@ -59,7 +59,7 @@ void *
 w5 (void *x)
 {
     for (int i = 0; i < PROBE_MAX; ++i) {
-        *p5 += 1;
+        *p5 = 5;
     }
     return NULL;
 }
@@ -67,7 +67,7 @@ void *
 w6 (void *x)
 {
     for (int i = 0; i < PROBE_MAX; ++i) {
-        *p6 += 1;
+        *p6 = 6;
     }
     return NULL;
 }
@@ -75,7 +75,7 @@ void *
 w7 (void *x)
 {
     for (int i = 0; i < PROBE_MAX; ++i) {
-        *p7 += 1;
+        *p7 = 7;
     }
     return NULL;
 }
@@ -83,7 +83,7 @@ void *
 w8 (void *x)
 {
     for (int i = 0; i < PROBE_MAX; ++i) {
-        *p8 += 1;
+        *p8 = 8;
     }
     return NULL;
 }
@@ -126,13 +126,13 @@ main ()
 //        pthread_join (t7, NULL);// (void **)&res);
 //        pthread_join (t8, NULL);// (void **)&res);
 
-	assert (a1 == a2);
-//	assert (a2 == a3);
-//	assert (a3 == a4);
-//	assert (a4 == a5);
-//	assert (a5 == a6);
-//	assert (a6 == a7);
-//	assert (a7 == a8);
+	assert (a1 != a2);
+//	assert (a2 != a3);
+//	assert (a3 != a4);
+//	assert (a4 != a5);
+//	assert (a5 != a6);
+//	assert (a6 != a7);
+//	assert (a7 != a8);
 
 	return 0;
 }
