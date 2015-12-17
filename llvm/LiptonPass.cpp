@@ -618,13 +618,13 @@ struct LockSearch : public LiptonPass::Processor {
         ThreadF = Pass->Threads[T];
 
         // Only main starts out single threaded
-        PT = new PThreadType(T->getName().equals("main"));
+        PT = new PThreadType(T->getName().equals("main")); //TODO: could be more precize
     }
 
     void
     addPThread (CallInst *Call, pt_e kind, bool add)
     {
-        if (Pass->opts.nolock) return;
+        if (Pass->opts.nolock && kind != ThreadStart) return;
         if (kind == ThreadStart && !PT->isCorrectThreads()) return; // nothing to do
 
         AliasAnalysis::Location L;
@@ -1591,6 +1591,8 @@ LiptonPass::addStaticPtr (LLVMInstr &LI, block_e type, int block,
     bool fixedPTR = obtainFixedPtrValue (cs, Is, LI, opts.verbose);
 
     if (!fixedPTR) {
+        if (opts.nolock) return NextTerm;
+
         SmallVector<LLVMInstr *, 8> pts;
         LLVMInstr *Ptr = lockPointers (cs, Is, LI);
         if (Ptr == nullptr) return NextTerm;
