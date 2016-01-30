@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#define PROBE_MAX 10
+#define PROBE_MAX 3
 
 static int last = -1;
 static int shared = 0;
