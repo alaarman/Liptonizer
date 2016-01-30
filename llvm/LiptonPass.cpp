@@ -245,8 +245,21 @@ static bool
 isCommutingAtomic (Instruction *I, Instruction *J)
 {
     AtomicRMWInst *A = dyn_cast_or_null<AtomicRMWInst>(I);
-    if (!A) return false;
     AtomicRMWInst *B = dyn_cast_or_null<AtomicRMWInst>(J);
+    if ((A || B) && !(A && B)) {
+        //errs () << "ATOMIC: "<< *I <<": "<< *J << endll;
+
+        AtomicRMWInst *C = A ? A : B;
+        switch (C->getOperation()) {
+        case AtomicRMWInst::BinOp::Add:
+        case AtomicRMWInst::BinOp::Sub:
+            errs () << "WARNING: ATOMIC? "<< *I <<": "<< *J << endll;
+            return true;
+        default:
+            break;
+        }
+    }
+    if (!A) return false;
     if (!B) return false;
     switch (A->getOperation()) {
     case AtomicRMWInst::BinOp::Add:
