@@ -35,7 +35,7 @@ fi
 
 #echo "$CCODE" >3
 
-clang -O0 $DEBUG -Iinclude -fno-rtti -emit-llvm -Iic3-haskell/include/  -o $BC -c -x c - <3 #-O1 for TBAA
+clang -O0 $DEBUG -Iinclude -fno-rtti -emit-llvm -Ivvt//include/  -o $BC -c -x c - <3 #-O1 for TBAA
 
 #clang -O1 -Iinclude -emit-llvm -Iic3-haskell/include/ -c $1 -o $BC #-O1 for TBAA
 
@@ -43,7 +43,7 @@ llvm-dis $BC
 
 OPT=${BC/%\.bc/-opt.bc}
 
-opt -mem2reg -internalize-public-api-list=main -internalize -inline -loops \
+opt -scalarrepl -mem2reg -internalize-public-api-list=main -internalize -inline -loops \
     -loop-simplify -loop-rotate -lcssa -loop-unroll \
     $BC > $OPT
 
