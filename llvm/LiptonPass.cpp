@@ -1311,6 +1311,7 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
                                   SmallVector<LLVMInstr *, 8> *Is,
                                   Instruction *I, LLVMThread *T)
 {
+    bool staticYield = false;
     // for all other threads
     for (pair<Function *, LLVMThread *> &Thread : Threads) {
         LLVMThread *T2 = Thread.second;
@@ -1351,11 +1352,11 @@ LiptonPass::conflictingNonMovers (SmallVector<Value *, 8> &sv,
             }
         }
         if (Blocks.size() == T2->BlockStarts.size()) {
-            return true; // static yield
+            staticYield = true; // static yield
         }
     }
 
-    return false;
+    return staticYield;
 }
 
 static void
@@ -1522,12 +1523,12 @@ LiptonPass::obtainFixedPtrValue (SmallVector<Value *, 8> &cs,
             } else if (StoreInst *S = dyn_cast_or_null<StoreInst>(Ptr)) {
                 G = S->getPointerOperand();
             } else {
-                return nullptr;
+                return false;
             }
             GlobalVariable *V = dyn_cast_or_null<GlobalVariable>(G);
             bool found = false;
             for (Value *GV2 : cs) {
-                if (GV2 == V) {break; found = true; }
+                if (GV2 == V) { found = true; break; }
             }
             if (!found) cs.push_back (V);
         } else {
