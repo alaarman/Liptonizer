@@ -1623,11 +1623,12 @@ LiptonPass::addStaticPtr (LLVMInstr &LI, block_e type, int block,
             Instruction *New = new ICmpInst (NextTerm, CmpInst::Predicate::ICMP_NE,
                                              Ptr1, Load);
 
-            ValChecks = BinaryOperator::Create (BinaryOperator::BinaryOps::Or,
-                                                ValChecks, New, "", NextTerm);
+            BinaryOperator *ValChecksB = BinaryOperator::Create (BinaryOperator::BinaryOps::Or,
+                                                                 ValChecks, New, "", NextTerm);
+            addMetaData (ValChecksB, DYN_YIELD_CONDITION, "");
+            ValChecks = ValChecksB;
         }
         NextTerm = insertDynYield (LI, NextTerm, ValChecks, type, block, Phase);
-        //addMetaData (ValChecks, DYN_YIELD_CONDITION, "");
 
         return NextTerm;
     }
@@ -1695,8 +1696,9 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
 
             Instruction *ThenTerm = I;
             if (!staticNM) {
-                Value *DynConflict = CallInst::Create(Act, sv, "", I);
+                CallInst *DynConflict = CallInst::Create(Act, sv, "", I);
                 ThenTerm = SplitBlockAndInsertIfThen (DynConflict, I, false);
+                addMetaData (DynConflict, DYN_YIELD_CONDITION, "");
             }
             new StoreInst(POSTCOMMIT, Phase, ThenTerm);
             break;
@@ -1744,6 +1746,7 @@ LiptonPass::dynamicYield (LLVMThread *T, Instruction *I, block_e type, int block
         if (!opts.nodyn && !staticNM) { // if in dynamic conflict (non-commutativity)
             CallInst *ActCall = CallInst::Create(Act, sv, "", NextTerm);
             NextTerm = insertDynYield (LI, NextTerm, ActCall, type, block, Phase);
+            addMetaData (ActCall, DYN_YIELD_CONDITION, "");
         }
         switch (Area) {
         case Top: {
