@@ -74,7 +74,7 @@ struct CompareFunctor {
     CompareFunctor(ReachPass *pass) : pass(pass) { }
 
     bool
-    operator()(ReachPass::CallT &l, ReachPass::CallT &r)
+    operator()(const ReachPass::CallT &l, const ReachPass::CallT &r)
     {
         unsigned i = pass->instructionMap[l.first];
         unsigned j = pass->instructionMap[r.first];
